@@ -99,8 +99,11 @@ Design complete. Implementation has begun, following the phase order in
 [IMPLEMENTATION_READINESS_CHECKLIST.md §6](IMPLEMENTATION_READINESS_CHECKLIST.md). In place: Phase 0
 (repository, strict compiler configuration, dependency-law and purity lint); Phase 1's foundations in
 `shared` (the tile face codec, seat order, branded types, and the `NoConcealed<T>` guard with its
-proof file); and a first vertical slice of Phase 2 in `dealer-core` — tile-set construction, the
-unbiased shuffle, the commitment scheme, the opening deal, the conservation invariant, checkpoint
-round-tripping, the seat projector, and four of the twenty-six commands (`start_deal`, `draw_tile`,
-`discard_tile`, `claim_discard`). No database, server, or client code exists yet, and the wire
-protocol in `shared` is still unwritten.
+proof file); and Phase 2 in `dealer-core` — tile-set construction, the unbiased shuffle, the
+commitment scheme, the opening deal, the conservation invariant, checkpoint round-tripping, the seat
+projector, and the full mechanical command catalog: dealing, drawing, discarding, claiming, exposing,
+retracting, swapping, hand arrangement, pass rounds, declarations, end-game agreement, bounded
+consent-based correction (with the wall-draw reshuffle), pause, and the table channel. 97 tests
+passing. Deliberately out of `dealer-core`'s scope and not yet built: `set_ready`/`clear_ready`/
+`close_table` (table-actor commands, Phase 4) and `bind`/`resume`/`ping` (gateway commands, Phase 5).
+No database, server, or client code exists yet, and the wire protocol in `shared` is still unwritten.

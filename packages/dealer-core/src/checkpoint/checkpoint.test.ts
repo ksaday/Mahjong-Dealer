@@ -33,11 +33,11 @@ describe("checkpoint / restore (docs/06 DD-29, DD-30; docs/16 §5)", () => {
   it("rejects a checkpoint that fails conservation (docs/07 §7.1)", () => {
     const state = dealOpeningHands(createDeterministicEntropy(55));
     const bytes = checkpoint(state);
-    const corrupted = JSON.parse(bytes) as { locations: { discards: string[] } };
+    const corrupted = JSON.parse(bytes) as {
+      live: { locations: { discards: string[]; hands: { east: string[] } } };
+    };
     // Duplicate a handle that's already in East's hand into the discard pile.
-    corrupted.locations.discards = [
-      (JSON.parse(bytes) as { locations: { hands: { east: string[] } } }).locations.hands.east[0]!,
-    ];
+    corrupted.live.locations.discards = [corrupted.live.locations.hands.east[0]!];
     expect(() => restore(JSON.stringify(corrupted))).toThrow(CheckpointRestoreError);
   });
 });

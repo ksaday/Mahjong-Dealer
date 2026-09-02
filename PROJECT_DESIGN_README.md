@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0, Phase 1 foundations, first slice of Phase 2) |
+| **Status** | Design complete — implementation underway (Phase 0, Phase 1 foundations, Phase 2 complete) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -334,16 +334,31 @@ Implementation has begun, in the order `IMPLEMENTATION_READINESS_CHECKLIST.md §
 `pnpm` workspace with the five packages named in `§4`, strict compiler configuration, and
 lint-enforced dependency and purity gates (Phase 0); in `shared`, the tile face codec, seat order,
 the branded types for concealed material, the `NoConcealed<T>` guard, and its proof file (Phase 1's
-foundations — the wire protocol and its schemas are not yet written); and, in `dealer-core`, a first
-vertical slice of Phase 2 — tile-set construction (`buildTileSet`), opaque handle minting, the
-unbiased Fisher–Yates shuffle with rejection sampling, the SHA-256 commitment scheme, the atomic
-opening deal, the conservation invariant, checkpoint serialize/restore, the seat projector
-(`project`, with a proof file confirming its output is rejected by a `NoConcealed<T>` sink), and
-four of the catalog's twenty-six commands — `start_deal`, `draw_tile`, `discard_tile`,
-`claim_discard` — each validated against the closed vocabulary in `docs/02 §3.1`. Not yet
-implemented in `dealer-core`: `expose_tiles`, `retract_exposure`, `swap_exposed_tile`,
-`arrange_hand`, the pass-round family, declarations, end-game, correction, pause, and communication
-commands, and the `CONCLUDING`/`CONCLUDED` states and overlay flags from `docs/09 §5`.
+foundations — the wire protocol and its schemas are not yet written); and, in `dealer-core`, the
+full mechanical command catalog (Phase 2) — tile-set construction (`buildTileSet`), opaque handle
+minting, the unbiased Fisher–Yates shuffle with rejection sampling, the SHA-256 commitment scheme,
+the atomic opening deal, the conservation invariant, checkpoint serialize/restore, and the seat
+projector (`project`, with a proof file confirming its output is rejected by a `NoConcealed<T>`
+sink).
+
+All four `GameState` lifecycles are modeled (`idle`, `in_play`, `concluding`, `concluded`, the last
+purging concealed material per `docs/16 §5.5`), along with the three overlay flags (`docs/09 §5`) and
+23 of the catalog's commands: `start_deal`, `draw_tile`, `discard_tile`, `claim_discard`,
+`expose_tiles`, `retract_exposure`, `swap_exposed_tile`, `arrange_hand`, the pass-round family
+(`open_pass_round`/`commit_pass`/`withdraw_pass`/`cancel_pass_round`, with atomic execution on the
+last commit), the conclusion family (`declare_mahjong`/`reveal_hand`/`respond_declaration`/
+`withdraw_declaration`/`propose_end_game`/`respond_end_game`), the correction family
+(`propose_correction`/`respond_correction`, including the wall-draw reshuffle from `docs/05 §8.4`),
+`request_pause`/`request_resume`, and `send_table_message`/`send_signal` — each validated against the
+closed vocabulary in `docs/02 §3.1`. 97 tests passing.
+
+Two scope boundaries, both documented in code: `set_ready`, `clear_ready`, and `close_table` belong
+to the table entity (`docs/05`) and its actor (`server`, Phase 4), not this game-mechanics core; and
+`bind`/`resume`/`ping` change no game state and belong to the gateway (`docs/12`, Phase 5). Since
+`dealer-core` retains no history of its own (it is pure — `docs/03 §5`), `propose_correction` and
+`respond_correction` take two host-supplied fields beyond the wire-facing command shape (the oldest
+retained checkpoint sequence, and the checkpoint to restore to) — the same pattern `start_deal`
+already established for injected entropy.
 
 Library versions were pinned at TypeScript 5.9.3 rather than the newly-released 7.x line, so that
 `typescript-eslint` — which the dependency-law and purity lint gates depend on — remains compatible;

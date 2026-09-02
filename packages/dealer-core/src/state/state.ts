@@ -1,91 +1,138 @@
-// Authoritative game state (docs/09_Game_State_Machine.md §4; docs/07_Tile_Model.md §9).
+// Authoritative game state (docs/09_Game_State_Machine.md §4, §5; docs/07_Tile_Model.md §9).
 //
-// This is a deliberately partial slice of the full machine: `lifecycle`
-// covers only IDLE and IN_PLAY (docs/09 §4) — DEALING is represented as the
-// atomic transition in `wall/deal.ts` rather than as an observable state
-// (docs/09 §4.2), and CONCLUDING/CONCLUDED, the overlay flags (§5), pass
-// rounds, and corrections are not yet implemented. See the module
-// doc-comment in `commands/apply.ts`.
+// Scope note: table lifecycle (OPEN/SEATED/CLOSED, seating, host identity,
+// readiness) is a different entity (docs/05) owned by the table actor
+// (`server`, Phase 4), not by this `GameState`. `set_ready`, `clear_ready`,
+// and `close_table` are table-actor commands, layered above `dealer-core`;
+// they are not implemented here. Auto-pause on presence loss (docs/22 §5)
+// is likewise a gateway concern — the host issues the same `request_pause`
+// this module implements once it detects an absence.
 import type { Salt, Seat, TileHandle, WallOrder } from "@mahjong-dealer/shared";
 import { SEAT_ORDER } from "@mahjong-dealer/shared";
 import type { Tile } from "../tiles/tile.js";
 
-/**
- * The five tile locations from docs/06 §6, minus `inFlight` (pass rounds are
- * not yet implemented). Every handle in the game is in exactly one of these
- * at every moment — that totality is the conservation invariant
- * (`conservation.ts`).
- */
-export interface TileLocations {
-  /**
-   * Ordered, head at index 0. Branded `WallOrder` (SRV, docs/07 §8): even
-   * though a bare handle reveals nothing by itself, the *order* of handles
-   * is what a rewind must protect (docs/08 §7.2), so it is branded at the
-   * point it is stored, not only where faces are attached.
-   */
-  readonly wall: WallOrder<TileHandle>;
-  /** Ordered per seat, in the seat's own arrangement (DD-20). Faces are OWN. */
-  readonly hands: Readonly<Record<Seat, readonly TileHandle[]>>;
-  /** Ordered; the last element is the current discard (DD-14). Faces are PUB. */
-  readonly discards: readonly TileHandle[];
-  /** Flat per-seat exposed tiles (DD-16). Faces are PUB. */
-  readonly exposures: Readonly<Record<Seat, readonly TileHandle[]>>;
+export type GameLifecycle = "idle" | "in_play" | "concluding" | "concluded";
+
+/** A face-up group in front of a seat (docs/10 §5.4). Identified so it can be retracted or targeted by a swap. */
+export interface Exposure {
+  readonly id: string;
+  readonly handles: readonly TileHandle[];
 }
 
-export type GameLifecycle = "idle" | "in_play";
+/**
+ * The five tile locations from docs/06 §6, `inFlight` keyed by the
+ * committing ("from") seat so a committed-but-unexecuted pass keeps its
+ * tiles unambiguously accounted for (docs/06 D-06-03).
+ */
+export interface TileLocations {
+  readonly wall: WallOrder<TileHandle>;
+  readonly hands: Readonly<Record<Seat, readonly TileHandle[]>>;
+  readonly discards: readonly TileHandle[];
+  readonly exposures: Readonly<Record<Seat, readonly Exposure[]>>;
+  readonly inFlight: Readonly<Record<Seat, readonly TileHandle[]>>;
+}
+
+/** A neutral, simultaneous, secret exchange (docs/10 §6). */
+export interface PassRoundRouting {
+  readonly from: Seat;
+  readonly to: Seat;
+}
+
+export interface PassRoundState {
+  readonly routing: readonly PassRoundRouting[];
+  /** Present once a "from" seat has committed (docs/10 `commit_pass`). */
+  readonly committed: Readonly<Partial<Record<Seat, readonly TileHandle[]>>>;
+}
+
+/** A pending, unanimous-consent rewind (docs/05 §8). */
+export interface CorrectionState {
+  readonly proposer: Seat;
+  readonly rewindTo: number;
+  readonly responses: Readonly<Partial<Record<Seat, "accept" | "reject">>>;
+}
+
+export interface PauseState {
+  readonly requestedBy: Seat;
+}
+
+export interface DeclarationProcess {
+  readonly kind: "declaration";
+  readonly declarer: Seat;
+  readonly responses: Readonly<Partial<Record<Seat, "accept" | "dispute">>>;
+}
+
+export interface EndGameProcess {
+  readonly kind: "end_game";
+  readonly proposer: Seat;
+  readonly responses: Readonly<Partial<Record<Seat, "accept" | "decline">>>;
+}
+
+export type ConcludingProcess = DeclarationProcess | EndGameProcess;
+
+export type GameOutcome =
+  | { readonly kind: "declaration_accepted"; readonly declarer: Seat }
+  | { readonly kind: "ended_by_agreement" };
 
 interface BaseGameState {
   /** The one authoritative sequence number (docs/19 §3.2). */
   readonly seq: number;
-  /**
-   * Every tile this game was constructed with, by handle. Held by the server
-   * only; nothing outside `project` ever reads a face from here for a seat
-   * not entitled to it (docs/14 §5).
-   */
-  readonly tileByHandle: ReadonlyMap<TileHandle, Tile>;
-  readonly locations: TileLocations;
 }
 
 export interface IdleGameState extends BaseGameState {
   readonly lifecycle: "idle";
-  readonly turn: null;
-  readonly salt: null;
-  readonly commitment: null;
 }
 
-export interface InPlayGameState extends BaseGameState {
-  readonly lifecycle: "in_play";
-  /** The turn pointer (docs/09 §6) — a field, not a state. */
+/** Shared shape of the two "tiles still exist" states: `in_play` and `concluding`. */
+export interface LiveGameState extends BaseGameState {
   readonly turn: Seat;
-  /** SRV, never revealed (docs/08 §5.3). */
+  readonly tileByHandle: ReadonlyMap<TileHandle, Tile>;
+  readonly locations: TileLocations;
   readonly salt: Salt;
-  /** PUB once published (docs/08 §5.1). */
   readonly commitment: string;
+  /** Seats that have voluntarily revealed their hand (docs/10 `reveal_hand`). Irreversible. */
+  readonly revealedHands: ReadonlySet<Seat>;
+  readonly nextExposureId: number;
+  readonly paused: PauseState | null;
+  readonly correction: CorrectionState | null;
 }
 
-export type GameState = IdleGameState | InPlayGameState;
+export interface InPlayGameState extends LiveGameState {
+  readonly lifecycle: "in_play";
+  readonly passRound: PassRoundState | null;
+}
 
-function emptyPerSeat(): Record<Seat, readonly TileHandle[]> {
-  const result = {} as Record<Seat, readonly TileHandle[]>;
+export interface ConcludingGameState extends LiveGameState {
+  readonly lifecycle: "concluding";
+  readonly process: ConcludingProcess;
+}
+
+/**
+ * Concealed material purged (docs/16 §5.5, docs/14 §4.3): no wall, no
+ * hands, no salt, no full `tileByHandle`. Only what was already public
+ * survives — discards, exposures, voluntarily revealed hands, and final
+ * hand sizes (a count, not contents).
+ */
+export interface ConcludedGameState extends BaseGameState {
+  readonly lifecycle: "concluded";
+  readonly outcome: GameOutcome;
+  readonly finalHandSizes: Readonly<Record<Seat, number>>;
+  readonly discards: readonly TileHandle[];
+  readonly exposures: Readonly<Record<Seat, readonly Exposure[]>>;
+  readonly revealedHands: Readonly<Partial<Record<Seat, readonly TileHandle[]>>>;
+  /** Faces for exactly the handles above — discards, exposures, revealed hands. Nothing else. */
+  readonly publicTileByHandle: ReadonlyMap<TileHandle, Tile>;
+}
+
+export type GameState = IdleGameState | InPlayGameState | ConcludingGameState | ConcludedGameState;
+
+export function emptyPerSeat<T>(fill: () => T): Record<Seat, T> {
+  const result = {} as Record<Seat, T>;
   for (const seat of SEAT_ORDER) {
-    result[seat] = [];
+    result[seat] = fill();
   }
   return result;
 }
 
 export function createIdleState(): IdleGameState {
-  return {
-    lifecycle: "idle",
-    seq: 0,
-    turn: null,
-    tileByHandle: new Map(),
-    locations: {
-      wall: [] as unknown as WallOrder<TileHandle>,
-      hands: emptyPerSeat(),
-      discards: [],
-      exposures: emptyPerSeat(),
-    },
-    salt: null,
-    commitment: null,
-  };
+  return { lifecycle: "idle", seq: 0 };
 }

@@ -15,7 +15,25 @@ export { shuffle } from "./wall/shuffle.js";
 export { canonicalWallEncoding, computeCommitment } from "./wall/commitment.js";
 export { dealOpeningHands, OPENING_HAND_COUNTS } from "./wall/deal.js";
 
-export type { GameLifecycle, GameState, IdleGameState, InPlayGameState, TileLocations } from "./state/state.js";
+export type {
+  ConcludedGameState,
+  ConcludingGameState,
+  ConcludingProcess,
+  CorrectionState,
+  DeclarationProcess,
+  EndGameProcess,
+  Exposure,
+  GameLifecycle,
+  GameOutcome,
+  GameState,
+  IdleGameState,
+  InPlayGameState,
+  LiveGameState,
+  PassRoundRouting,
+  PassRoundState,
+  PauseState,
+  TileLocations,
+} from "./state/state.js";
 export { createIdleState } from "./state/state.js";
 export type { ConservationOk, ConservationResult, ConservationViolation } from "./state/conservation.js";
 export { invariants } from "./state/conservation.js";
@@ -23,7 +41,16 @@ export { invariants } from "./state/conservation.js";
 export type { ApplyOk, ApplyResult, Command, DealerEvent, Rejection, RejectionCode } from "./commands/apply.js";
 export { apply } from "./commands/apply.js";
 
-export type { OwnTile, PublicTile, SeatSummary, SeatView } from "./projector/project.js";
+export type {
+  OwnTile,
+  PublicConcludingProcess,
+  PublicCorrection,
+  PublicExposure,
+  PublicPassRound,
+  PublicTile,
+  SeatSummary,
+  SeatView,
+} from "./projector/project.js";
 export { project } from "./projector/project.js";
 
 export { CheckpointRestoreError, checkpoint, restore } from "./checkpoint/checkpoint.js";

@@ -1,5 +1,5 @@
 // The conservation invariant (docs/07_Tile_Model.md §7; docs/06 DD-04):
-//   wall ⊎ hands ⊎ discards ⊎ exposures  ==  the game's tile set
+//   wall ⊎ hands ⊎ discards ⊎ exposures ⊎ inFlight  ==  the game's tile set
 // Rule-free and exhaustively checkable: it is pure bookkeeping over handles,
 // with no reference to any tile's face.
 import { SEAT_ORDER } from "@mahjong-dealer/shared";
@@ -22,13 +22,17 @@ export type ConservationResult = ConservationOk | ConservationViolation;
  * Verifies every handle in this game's tile set appears in exactly one
  * location. A violation is fatal in production (D-07-09): continuing on
  * miscounted state could hand a player a tile that does not exist.
+ *
+ * `idle` and `concluded` have no full inventory to check against — `idle`
+ * has no tiles yet, and `concluded` has deliberately purged its
+ * authoritative tile set (docs/16 §5.5) — so both trivially hold.
  */
 export function invariants(state: GameState): ConservationResult {
-  if (state.lifecycle === "idle") {
+  if (state.lifecycle === "idle" || state.lifecycle === "concluded") {
     return { ok: true };
   }
 
-  const { wall, hands, discards, exposures } = state.locations;
+  const { wall, hands, discards, exposures, inFlight } = state.locations;
   const seen = new Map<TileHandle, number>();
   const record = (handle: TileHandle): void => {
     seen.set(handle, (seen.get(handle) ?? 0) + 1);
@@ -37,7 +41,10 @@ export function invariants(state: GameState): ConservationResult {
   for (const handle of wall) record(handle);
   for (const seat of SEAT_ORDER) {
     for (const handle of hands[seat]) record(handle);
-    for (const handle of exposures[seat]) record(handle);
+    for (const exposure of exposures[seat]) {
+      for (const handle of exposure.handles) record(handle);
+    }
+    for (const handle of inFlight[seat]) record(handle);
   }
   for (const handle of discards) record(handle);
 

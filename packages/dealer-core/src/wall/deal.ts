@@ -7,7 +7,7 @@ import { SEAT_ORDER } from "@mahjong-dealer/shared";
 import { draw256BitHex, type Entropy } from "../entropy.js";
 import { mintHandles } from "../tiles/handles.js";
 import { buildTileSet, compareTiles, type Tile } from "../tiles/tile.js";
-import type { InPlayGameState, TileLocations } from "../state/state.js";
+import { emptyPerSeat, type InPlayGameState, type TileLocations } from "../state/state.js";
 import { computeCommitment } from "./commitment.js";
 import { shuffle } from "./shuffle.js";
 
@@ -51,16 +51,12 @@ export function dealOpeningHands(entropy: Entropy): InPlayGameState {
   }
   const remainingWall = wallOrder.slice(cursor);
 
-  const emptyExposures: Record<Seat, readonly TileHandle[]> = {} as Record<Seat, readonly TileHandle[]>;
-  for (const seat of SEAT_ORDER) {
-    emptyExposures[seat] = [];
-  }
-
   const locations: TileLocations = {
     wall: remainingWall as unknown as WallOrder<TileHandle>,
     hands,
     discards: [],
-    exposures: emptyExposures,
+    exposures: emptyPerSeat(() => []),
+    inFlight: emptyPerSeat(() => []),
   };
 
   return {
@@ -71,6 +67,11 @@ export function dealOpeningHands(entropy: Entropy): InPlayGameState {
     locations,
     salt,
     commitment,
+    revealedHands: new Set(),
+    nextExposureId: 1,
+    paused: null,
+    correction: null,
+    passRound: null,
   };
 }
 

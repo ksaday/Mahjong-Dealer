@@ -2,14 +2,19 @@ import { describe, expect, it } from "vitest";
 import type { WallOrder } from "@mahjong-dealer/shared";
 import type { TileHandle } from "@mahjong-dealer/shared";
 import { invariants } from "../state/conservation.js";
-import { createIdleState } from "../state/state.js";
+import { createIdleState, type GameState, type InPlayGameState } from "../state/state.js";
 import { createDeterministicEntropy } from "../testing/deterministic-entropy.js";
 import { apply } from "./apply.js";
 
-function dealtState() {
+function dealtState(): InPlayGameState {
   const result = apply(createIdleState(), { type: "start_deal", seat: "east" }, createDeterministicEntropy(21));
   if (!result.ok) throw new Error("unreachable: deal should always succeed from idle");
-  return result.state;
+  return expectInPlay(result.state);
+}
+
+function expectInPlay(state: GameState): InPlayGameState {
+  if (state.lifecycle !== "in_play") throw new Error(`expected in_play, got ${state.lifecycle}`);
+  return state;
 }
 
 describe("apply — start_deal (docs/10 §4)", () => {
@@ -47,10 +52,11 @@ describe("apply — draw_tile (docs/10 §5.1; the only turn-gated command)", () 
     const handBefore = state.locations.hands.east.length;
     const result = apply(state, { type: "draw_tile", seat: "east", end: "head" });
     expect(result.ok).toBe(true);
+    const after = expectInPlay(assertOk(result));
+    expect(after.locations.hands.east).toHaveLength(handBefore + 1);
+    expect(after.locations.wall).toHaveLength(wallBefore - 1);
+    expect(after.turn).toBe("south");
     if (result.ok) {
-      expect(result.state.locations.hands.east).toHaveLength(handBefore + 1);
-      expect(result.state.locations.wall).toHaveLength(wallBefore - 1);
-      expect(result.state.turn).toBe("south");
       const drawn = result.events.find((e) => e.type === "TileDrawn");
       expect(drawn).toBeDefined();
     }
@@ -79,12 +85,10 @@ describe("apply — discard_tile (docs/10 §5.2; not turn-gated)", () => {
     const state = dealtState();
     const tile = state.locations.hands.east[0]!;
     const result = apply(state, { type: "discard_tile", seat: "east", handle: tile });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.state.locations.discards).toEqual([tile]);
-      expect(result.state.locations.hands.east).not.toContain(tile);
-      expect(result.state.turn).toBe(state.turn); // unchanged
-    }
+    const after = expectInPlay(assertOk(result));
+    expect(after.locations.discards).toEqual([tile]);
+    expect(after.locations.hands.east).not.toContain(tile);
+    expect(after.turn).toBe(state.turn); // unchanged
   });
 });
 
@@ -99,20 +103,15 @@ describe("apply — claim_discard (docs/10 §5.3; moves the turn to the claimant
   it("lets any seat claim the current discard and moves the turn to the claimant (NR-005)", () => {
     const dealt = dealtState();
     const discardedTile = dealt.locations.hands.east[0]!;
-    const afterDiscard = apply(dealt, { type: "discard_tile", seat: "east", handle: discardedTile });
-    if (!afterDiscard.ok) throw new Error("unreachable");
+    const afterDiscard = expectInPlay(
+      assertOk(apply(dealt, { type: "discard_tile", seat: "east", handle: discardedTile })),
+    );
 
-    const result = apply(afterDiscard.state, {
-      type: "claim_discard",
-      seat: "north",
-      handle: discardedTile,
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.state.turn).toBe("north");
-      expect(result.state.locations.discards).toHaveLength(0);
-      expect(result.state.locations.hands.north).toContain(discardedTile);
-    }
+    const result = apply(afterDiscard, { type: "claim_discard", seat: "north", handle: discardedTile });
+    const after = expectInPlay(assertOk(result));
+    expect(after.turn).toBe("north");
+    expect(after.locations.discards).toHaveLength(0);
+    expect(after.locations.hands.north).toContain(discardedTile);
   });
 });
 
@@ -120,20 +119,23 @@ describe("apply — conservation across a sequence of commands", () => {
   it("keeps every tile accounted for through draw, discard, and claim", () => {
     let state = dealtState();
 
-    const drawn = apply(state, { type: "draw_tile", seat: "east", end: "tail" });
-    if (!drawn.ok) throw new Error("unreachable");
-    state = drawn.state;
+    state = expectInPlay(assertOk(apply(state, { type: "draw_tile", seat: "east", end: "tail" })));
     expect(invariants(state)).toEqual({ ok: true });
 
     const tileToDiscard = state.locations.hands.east[0]!;
-    const discarded = apply(state, { type: "discard_tile", seat: "east", handle: tileToDiscard });
-    if (!discarded.ok) throw new Error("unreachable");
-    state = discarded.state;
+    state = expectInPlay(
+      assertOk(apply(state, { type: "discard_tile", seat: "east", handle: tileToDiscard })),
+    );
     expect(invariants(state)).toEqual({ ok: true });
 
-    const claimed = apply(state, { type: "claim_discard", seat: "west", handle: tileToDiscard });
-    if (!claimed.ok) throw new Error("unreachable");
-    state = claimed.state;
+    state = expectInPlay(
+      assertOk(apply(state, { type: "claim_discard", seat: "west", handle: tileToDiscard })),
+    );
     expect(invariants(state)).toEqual({ ok: true });
   });
 });
+
+function assertOk(result: { readonly ok: boolean; readonly state?: GameState }): GameState {
+  if (!result.ok || result.state === undefined) throw new Error("unreachable: expected an accepted command");
+  return result.state;
+}
