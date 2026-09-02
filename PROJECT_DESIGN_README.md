@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0-2 complete, Phase 4's table actor started) |
+| **Status** | Design complete — implementation underway (Phase 0-2 complete; Phase 3's schema and Phase 4's table actor started) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -414,7 +414,32 @@ an idempotency/gateway concern (`docs/13`) this actor doesn't yet see; the `even
 the acting seat stands in for confirmation in this slice. `bind`/`resume`/`ping`, real accounts and
 connect tickets, and asynchronous persistence remain gateway (Phase 5) and `db` (Phase 3) work.
 
-156 tests passing overall. No database or client code exists yet.
+**Phase 3's schema** is started, in `db` (`docs/17_Database_Design.md`): two forward-only SQL
+migrations (`docs/17 §3`: an applied migration is immutable, corrections are new migrations) — the
+eleven tables in dependency order, six native enumerations, every constraint named in `docs/17 §6`
+(one seat per account platform-wide via a partial unique index, at most one live game per table,
+single-use tickets, no duplicate sequence in the event log, exactly-once command receipts via a
+composite primary key), and append-only triggers on `game_events` and `audit_log`. The second
+migration creates the three roles from `docs/17 §7.2` and implements the column-level `REVOKE`/
+`GRANT` that denies the general `app` role `SELECT` on either encrypted `private_state` column —
+D-17-03's "second barrier behind encryption." Plain SQL files plus a minimal `pg`-based runner
+(`migrate`/`listMigrations`) rather than an ORM's migration DSL, for the same proportionality reason
+`ADR-0015` gives for Fastify over a heavier framework: this schema's load-bearing detail is exactly
+the DDL an ORM abstraction tends to make awkward — column grants, triggers. Also added: `uuidv7()`
+(`docs/17 §3`: "Application-generated UUIDv7," since IDs are assigned before the first `INSERT`, not
+by a database default) and TypeScript row types mirroring every table.
+
+Registration, login, session issuance, and Argon2id password hashing — the rest of Phase 3 — are
+`server`'s job against this schema and are not built. Nor is any live-database integration test:
+this environment has two already-running Postgres/Redis containers, but inspecting the Postgres one
+showed it belongs to the *other* project on this machine (`~/Projects/American Mahjong` — its tables
+include `ledger_postings`, `point_purchases`, `rule_versions`, exactly the subsystems this project's
+ADRs exclude), so it was left untouched rather than connected to, and no new database container was
+started without being asked. The migrations are therefore verified statically (schema smoke tests
+reading the SQL text) rather than by an integration suite against a live database — a real gap
+against `docs/26 §7`'s `PersistenceHarness`, worth closing before this schema is trusted in anger.
+
+168 tests passing overall. No client code exists yet.
 
 ---
 

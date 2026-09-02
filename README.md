@@ -119,6 +119,14 @@ locks" for free), the three table-level commands `dealer-core` deliberately does
 (`set_ready`/`clear_ready`/`close_table`), a bounded checkpoint history for correction, and the
 composition of a table's status with `dealer-core`'s projected game state into the wire
 `WireSeatView`/`TableEvent` shapes — the reconciliation flagged as follow-up when the wire protocol
-was built. A `TableHarness` (`docs/26` §3) drives it in tests with no transport. 156 tests passing
-overall. Still nothing in `db` or `web`, and `bind`/`resume`/`ping`, real accounts/tickets, and async
-persistence remain gateway/Phase 5 and db/Phase 3 work.
+was built. A `TableHarness` (`docs/26` §3) drives it in tests with no transport.
+
+Phase 3's schema is in `db`: two forward-only SQL migrations implementing all eleven tables from
+`docs/17_Database_Design.md` — native enums, every constraint in `docs/17 §6` (one seat per account
+platform-wide, at most one live game per table, single-use tickets, exactly-once command receipts),
+append-only triggers on the event and audit logs, and column-level `REVOKE`/`GRANT` denying the
+general application role `SELECT` on either encrypted `private_state` column — plus a UUIDv7
+generator and a minimal migration runner (plain SQL rather than an ORM, so that DDL stays exact).
+Registration, login, and session issuance — the rest of Phase 3 — are `server`'s job against this
+schema, not yet built. 168 tests passing overall. Still nothing in `web`; `bind`/`resume`/`ping` and
+real connect tickets remain gateway/Phase 5 work.
