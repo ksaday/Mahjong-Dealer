@@ -65,10 +65,13 @@ export default [
   },
 
   // dealer-core may import shared only, and no I/O of any kind
-  // (docs/03 §4.1, §5; NFR-060, NFR-061).
+  // (docs/03 §4.1, §5; NFR-060, NFR-061). Test files are exempt from the
+  // purity ban — a test reading a fixture with `node:fs` is not the library
+  // acquiring I/O — but still subject to the dependency-law import ban.
   {
     ...base,
     files: ["packages/dealer-core/src/**/*.ts"],
+    ignores: ["packages/dealer-core/src/**/*.test.ts"],
     rules: {
       ...base.rules,
       "no-restricted-imports": [
@@ -95,8 +98,6 @@ export default [
                 "node:dns",
                 "child_process",
                 "node:child_process",
-                "crypto",
-                "node:crypto",
                 "worker_threads",
                 "node:worker_threads",
                 "ws",
@@ -105,6 +106,20 @@ export default [
               ],
               "dealer-core is pure: no I/O of any kind — docs/03_System_Architecture.md §5, NFR-060.",
             ),
+            // `crypto`/`node:crypto` is otherwise importable for pure hashing
+            // (the shuffle commitment, docs/08_Shuffle_and_Deal_Architecture.md
+            // §5.1) — only its *random* sources are banned; randomness is
+            // injected by the host (docs/03 §5).
+            {
+              name: "crypto",
+              importNames: ["randomBytes", "randomInt", "randomUUID", "randomFillSync", "webcrypto", "getRandomValues"],
+              message: "dealer-core is pure — no randomness generation (docs/03 §5, NFR-060). Entropy is injected by the host.",
+            },
+            {
+              name: "node:crypto",
+              importNames: ["randomBytes", "randomInt", "randomUUID", "randomFillSync", "webcrypto", "getRandomValues"],
+              message: "dealer-core is pure — no randomness generation (docs/03 §5, NFR-060). Entropy is injected by the host.",
+            },
           ],
         },
       ],
@@ -133,6 +148,26 @@ export default [
           selector:
             "CallExpression[callee.object.name='Date'][callee.property.name='now']",
           message: "dealer-core is pure — no `Date.now` (docs/03 §5, NFR-060). Time is injected by the host.",
+        },
+      ],
+    },
+  },
+
+  // dealer-core test files: the dependency-law import ban still applies —
+  // a test importing `server`/`web`/`db` would be a real layering violation
+  // — but not the purity ban, which governs the library itself.
+  {
+    ...base,
+    files: ["packages/dealer-core/src/**/*.test.ts"],
+    rules: {
+      ...base.rules,
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: forbid(
+            ["@mahjong-dealer/server", "@mahjong-dealer/web", "@mahjong-dealer/db"],
+            "dealer-core may import shared only — docs/03_System_Architecture.md §4.1.",
+          ),
         },
       ],
     },

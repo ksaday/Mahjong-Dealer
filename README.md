@@ -96,7 +96,11 @@ belong in this system at any layer.
 ## Status
 
 Design complete. Implementation has begun, following the phase order in
-[IMPLEMENTATION_READINESS_CHECKLIST.md §6](IMPLEMENTATION_READINESS_CHECKLIST.md). Phase 0
-(repository, strict compiler configuration, dependency-law and purity lint) and the first slice of
-Phase 1 (`shared`: the tile face codec, branded types, and the `NoConcealed<T>` guard with its proof
-file) are in place. No database, server, or client code exists yet.
+[IMPLEMENTATION_READINESS_CHECKLIST.md §6](IMPLEMENTATION_READINESS_CHECKLIST.md). In place: Phase 0
+(repository, strict compiler configuration, dependency-law and purity lint); Phase 1's foundations in
+`shared` (the tile face codec, seat order, branded types, and the `NoConcealed<T>` guard with its
+proof file); and a first vertical slice of Phase 2 in `dealer-core` — tile-set construction, the
+unbiased shuffle, the commitment scheme, the opening deal, the conservation invariant, checkpoint
+round-tripping, the seat projector, and four of the twenty-six commands (`start_deal`, `draw_tile`,
+`discard_tile`, `claim_discard`). No database, server, or client code exists yet, and the wire
+protocol in `shared` is still unwritten.

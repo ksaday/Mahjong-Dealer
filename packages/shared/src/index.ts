@@ -3,6 +3,9 @@ export type { ConcealedFace, ConcealedHand, ConcealedMaterial, Salt, WallOrder }
 export type { TileHandle } from "./privacy/handle.js";
 export type { NoConcealed } from "./privacy/no-concealed.js";
 
+export { isSeat, nextSeat, SEAT_ORDER } from "./table/seat.js";
+export type { Seat } from "./table/seat.js";
+
 export {
   allFaces,
   BAM_FACES,
