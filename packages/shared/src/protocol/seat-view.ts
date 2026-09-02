@@ -55,7 +55,8 @@ export interface WireExposure {
 
 export interface WireSeatSummary {
   readonly seat: Seat;
-  readonly displayName: string;
+  /** `null` when the seat is unoccupied — docs/05 §3.1's separate "Occupancy" property is folded in here rather than duplicated. */
+  readonly displayName: string | null;
   readonly connection: "connected" | "away" | "absent";
   readonly ready: boolean;
   readonly handSize: number;

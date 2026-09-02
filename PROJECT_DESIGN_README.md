@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0, Phase 1, Phase 2 complete) |
+| **Status** | Design complete — implementation underway (Phase 0-2 complete, Phase 4's table actor started) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -388,8 +388,33 @@ events into `TableEvent`, is the table actor's job (Phase 4/5), not a gap in eit
 
 Library versions were pinned at TypeScript 5.9.3 rather than the newly-released 7.x line, so that
 `typescript-eslint` — which the dependency-law and purity lint gates depend on — remains compatible;
-this is an implementation-time choice under `ADR-0015`, not a revision of it. 130 tests passing
-overall. No database, server, or client code exists yet.
+this is an implementation-time choice under `ADR-0015`, not a revision of it.
+
+**Phase 4's table actor** is started, in `server` (`docs/05_Game_Table_Architecture.md §6`; skipping
+ahead of Phase 3's `db`/auth, since the actor can run against an in-memory table and injected
+entropy without either): `table/table.ts` (the four-seat entity, `docs/05 §3`-`§5`, seat assignment
+in fixed order, host-on-first-seat, readiness); `table/actor.ts` (`TableActor`, a synchronous
+`submit` pipeline — Node's single-threaded, run-to-completion event loop gives "one writer, no
+locks" for free, docs/05 §6.1, so no explicit queue data structure was needed); `table/checkpoints.ts`
+(a bounded ring buffer for correction, `docs/05 §8.3`'s "last 10 public actions"); `table/events.ts`
+and `table/view.ts` (the reconciliation flagged as follow-up above: mapping `dealer-core`'s internal
+`DealerEvent`/`SeatView` onto the wire `TableEvent`/`WireSeatView`); and a `TableHarness`
+(`docs/26 §3`) for driving it in tests with no transport.
+
+The actor also implements the three commands `dealer-core` deliberately left out —
+`set_ready`/`clear_ready`/`close_table` — since those belong to the table entity, not game mechanics.
+One design point worth flagging: `dealer-core`'s `GameState.seq` restarts at 1 on every `start_deal`
+(fresh game), but the wire `seq` must never reset for a table's life (`docs/33_API §6`, `docs/19
+§3.2`). The actor therefore keeps its **own** monotonic `seq`, separate from `dealer-core`'s, and
+translates between the two spaces at exactly the one place they meet: `propose_correction`'s
+`rewindTo` and `respond_correction`'s resulting `CorrectionApplied.restoredSeq`, both expressed to
+the client in the actor's seq space, translated to `dealer-core`'s own seq space (and back) via the
+actor's checkpoint history. `ack` frames are not modeled here since they require a client `cmdId`,
+an idempotency/gateway concern (`docs/13`) this actor doesn't yet see; the `event` frame delivered to
+the acting seat stands in for confirmation in this slice. `bind`/`resume`/`ping`, real accounts and
+connect tickets, and asynchronous persistence remain gateway (Phase 5) and `db` (Phase 3) work.
+
+156 tests passing overall. No database or client code exists yet.
 
 ---
 

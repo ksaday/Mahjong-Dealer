@@ -111,6 +111,14 @@ The rest of Phase 1 is now also in place, in `shared`: the wire protocol — 30 
 runtime schema validators, the 7 server frame types, the 39-event table catalog with PUB/OWN fields
 declared per event, the rejection/close/notice code catalogs, and the wire seat-view schema — each
 checked against `docs/19_WebSocket_Event_Catalog.md`'s tables for naming law, forbidden vocabulary,
-and exhaustive coverage. 130 tests passing overall. No database, server, or client code exists yet;
-composing the wire protocol with `dealer-core`'s (currently non-identical) internal state/event
-shapes into working frames is the table actor's job (Phase 4).
+and exhaustive coverage.
+
+Phase 4's table actor is now in `server`: table lifecycle and seating (`docs/05`), a synchronous
+`TableActor.submit` command pipeline (Node's own run-to-completion event loop giving "one writer, no
+locks" for free), the three table-level commands `dealer-core` deliberately doesn't implement
+(`set_ready`/`clear_ready`/`close_table`), a bounded checkpoint history for correction, and the
+composition of a table's status with `dealer-core`'s projected game state into the wire
+`WireSeatView`/`TableEvent` shapes — the reconciliation flagged as follow-up when the wire protocol
+was built. A `TableHarness` (`docs/26` §3) drives it in tests with no transport. 156 tests passing
+overall. Still nothing in `db` or `web`, and `bind`/`resume`/`ping`, real accounts/tickets, and async
+persistence remain gateway/Phase 5 and db/Phase 3 work.
