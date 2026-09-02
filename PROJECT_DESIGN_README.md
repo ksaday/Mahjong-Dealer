@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0, Phase 1 foundations, Phase 2 complete) |
+| **Status** | Design complete — implementation underway (Phase 0, Phase 1, Phase 2 complete) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -332,14 +332,11 @@ what was redesigned, and what was deliberately discarded is recorded in
 
 Implementation has begun, in the order `IMPLEMENTATION_READINESS_CHECKLIST.md §6` prescribes: a
 `pnpm` workspace with the five packages named in `§4`, strict compiler configuration, and
-lint-enforced dependency and purity gates (Phase 0); in `shared`, the tile face codec, seat order,
-the branded types for concealed material, the `NoConcealed<T>` guard, and its proof file (Phase 1's
-foundations — the wire protocol and its schemas are not yet written); and, in `dealer-core`, the
-full mechanical command catalog (Phase 2) — tile-set construction (`buildTileSet`), opaque handle
-minting, the unbiased Fisher–Yates shuffle with rejection sampling, the SHA-256 commitment scheme,
-the atomic opening deal, the conservation invariant, checkpoint serialize/restore, and the seat
-projector (`project`, with a proof file confirming its output is rejected by a `NoConcealed<T>`
-sink).
+lint-enforced dependency and purity gates (Phase 0); and, in `dealer-core`, the full mechanical
+command catalog (Phase 2) — tile-set construction (`buildTileSet`), opaque handle minting, the
+unbiased Fisher–Yates shuffle with rejection sampling, the SHA-256 commitment scheme, the atomic
+opening deal, the conservation invariant, checkpoint serialize/restore, and the seat projector
+(`project`, with a proof file confirming its output is rejected by a `NoConcealed<T>` sink).
 
 All four `GameState` lifecycles are modeled (`idle`, `in_play`, `concluding`, `concluded`, the last
 purging concealed material per `docs/16 §5.5`), along with the three overlay flags (`docs/09 §5`) and
@@ -350,7 +347,7 @@ last commit), the conclusion family (`declare_mahjong`/`reveal_hand`/`respond_de
 `withdraw_declaration`/`propose_end_game`/`respond_end_game`), the correction family
 (`propose_correction`/`respond_correction`, including the wall-draw reshuffle from `docs/05 §8.4`),
 `request_pause`/`request_resume`, and `send_table_message`/`send_signal` — each validated against the
-closed vocabulary in `docs/02 §3.1`. 97 tests passing.
+closed vocabulary in `docs/02 §3.1`.
 
 Two scope boundaries, both documented in code: `set_ready`, `clear_ready`, and `close_table` belong
 to the table entity (`docs/05`) and its actor (`server`, Phase 4), not this game-mechanics core; and
@@ -360,10 +357,39 @@ to the table entity (`docs/05`) and its actor (`server`, Phase 4), not this game
 retained checkpoint sequence, and the checkpoint to restore to) — the same pattern `start_deal`
 already established for injected entropy.
 
+The rest of Phase 1 (`docs/03 §4.2`'s "wire protocol: command shapes, frame shapes, event shapes,
+error codes, close codes... schema validators for every inbound command") is now built in `shared`,
+transcribed field-for-field from `docs/19_WebSocket_Event_Catalog.md` and
+`docs/33_API/Wire_Protocol_Contract.md`: the 30-command catalog (`ClientFrame`, one discriminated
+union over `cmd`) with a `zod` validator per command enforcing exactly the stated structural bounds
+(1-20 unique handles, 2-4 distinct-`from` routing entries, 1-512 character messages — never a
+group-shape or count rule, per `docs/33_API §4.1`); the 7 server frame types; a 39-event table
+catalog with PUB fields required and OWN fields optional on one merged type per event, matching
+`docs/19 §6`'s "one event, four payloads" model; the rejection (17), close (8), and notice (3) code
+catalogs; and the wire seat-view schema. Two catalogs (commands, events) carry a compile-time
+exhaustiveness check — a witness object or a type-level key-set equality — so a name added to the
+union but not the roster (or vice versa) fails the build, which is what `docs/19 §9`'s "name
+inventory" check asks for.
+
+Three judgment calls worth flagging against the SSOT rather than treated as settled: (1) a
+row-by-row transcription of `docs/19 §6.1`-`§6.7` gives 39 events, not the "38" in that document's
+own revision history — recorded as a likely off-by-one in the doc, not reconciled by dropping a row;
+(2) `docs/33_API §5`'s illustrative seat-view example shows exposure tiles as bare faces, but
+`swap_exposed_tile`'s `exposedHandle` parameter has no other source, so `WireExposure` carries
+handles too; (3) that same example shows only a `declaration` field with no `endGame` counterpart,
+though `propose_end_game`/`respond_end_game` is a distinct PUB process from a declaration
+(`docs/10 §7`) — a `WireEndGame` field was added for symmetry. None of these needed inventing new
+behavior, only a documented choice where the tables didn't fully specify the shape.
+
+`dealer-core`'s own `SeatView`/`DealerEvent` types (built in Phase 2, before this wire contract was
+transcribed) do not yet match these wire shapes field-for-field — composing a table's `tableState`
+with a game's projected fields into the exact wire `WireSeatView`, and `dealer-core`'s internal
+events into `TableEvent`, is the table actor's job (Phase 4/5), not a gap in either layer.
+
 Library versions were pinned at TypeScript 5.9.3 rather than the newly-released 7.x line, so that
 `typescript-eslint` — which the dependency-law and purity lint gates depend on — remains compatible;
-this is an implementation-time choice under `ADR-0015`, not a revision of it. No database, server,
-or client code exists yet.
+this is an implementation-time choice under `ADR-0015`, not a revision of it. 130 tests passing
+overall. No database, server, or client code exists yet.
 
 ---
 

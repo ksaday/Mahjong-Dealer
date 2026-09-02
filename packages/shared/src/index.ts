@@ -31,3 +31,5 @@ export type {
   JokerFace,
   WindFace,
 } from "./tiles/face.js";
+
+export * from "./protocol/index.js";

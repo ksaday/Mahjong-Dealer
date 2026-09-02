@@ -103,7 +103,14 @@ proof file); and Phase 2 in `dealer-core` — tile-set construction, the unbiase
 commitment scheme, the opening deal, the conservation invariant, checkpoint round-tripping, the seat
 projector, and the full mechanical command catalog: dealing, drawing, discarding, claiming, exposing,
 retracting, swapping, hand arrangement, pass rounds, declarations, end-game agreement, bounded
-consent-based correction (with the wall-draw reshuffle), pause, and the table channel. 97 tests
-passing. Deliberately out of `dealer-core`'s scope and not yet built: `set_ready`/`clear_ready`/
-`close_table` (table-actor commands, Phase 4) and `bind`/`resume`/`ping` (gateway commands, Phase 5).
-No database, server, or client code exists yet, and the wire protocol in `shared` is still unwritten.
+consent-based correction (with the wall-draw reshuffle), pause, and the table channel. Deliberately
+out of `dealer-core`'s scope: `set_ready`/`clear_ready`/`close_table` (table-actor commands, Phase 4)
+and `bind`/`resume`/`ping` (gateway commands, Phase 5).
+
+The rest of Phase 1 is now also in place, in `shared`: the wire protocol — 30 client commands with
+runtime schema validators, the 7 server frame types, the 39-event table catalog with PUB/OWN fields
+declared per event, the rejection/close/notice code catalogs, and the wire seat-view schema — each
+checked against `docs/19_WebSocket_Event_Catalog.md`'s tables for naming law, forbidden vocabulary,
+and exhaustive coverage. 130 tests passing overall. No database, server, or client code exists yet;
+composing the wire protocol with `dealer-core`'s (currently non-identical) internal state/event
+shapes into working frames is the table actor's job (Phase 4).
