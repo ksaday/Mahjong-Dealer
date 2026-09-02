@@ -136,6 +136,7 @@ The dashed line is the most important line in this repository. The rule book is 
 
 | File | What it owns |
 |---|---|
+| [README.md](README.md) | Repository landing page. Exists because GitHub renders `README.md`; points here. Owns nothing. |
 | [PROJECT_DESIGN_README.md](PROJECT_DESIGN_README.md) | This map. Owns nothing normative. |
 | [SCOPE_BOUNDARIES.md](SCOPE_BOUNDARIES.md) | The `NR-###` negative-requirement catalog and the Physical vs Digital Responsibility Matrix |
 | [DESIGN_DECISIONS_SUMMARY.md](DESIGN_DECISIONS_SUMMARY.md) | Every `D-CC-##` and every ADR in one table |
@@ -339,3 +340,4 @@ been written.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial design documentation package |
+| 0.2 | 2026-09-02 | Design (architect role), owner-approved | Added `/README.md` to the root documents map; it is a repository landing page for platform convention and owns nothing normative |

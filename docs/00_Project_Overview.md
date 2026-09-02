@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 00_Project_Overview.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-02 |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Owns the project objectives (`OBJ-##`), the non-negotiable constraints (`C-##`), the glossary, and the documentation governance rules that every other chapter follows. Does **not** own the requirement catalogs (`01`), the scope boundary (`02` and `SCOPE_BOUNDARIES.md`), or any technical design. |
 
@@ -252,8 +252,9 @@ Detailed catalog with measurement methods in `01 §6` and `23`.
 
 | Path | Content class |
 |---|---|
+| `/README.md` | Repository landing page, present for platform convention only. Points at the entry point. Normative about nothing. |
 | `/PROJECT_DESIGN_README.md` | Entry point and map. Normative about nothing. |
-| `/*.md` (root) | Cross-cutting artifacts: scope, matrices, threat models, definition of done |
+| `/*.md` (other root files) | Cross-cutting artifacts: scope, matrices, threat models, definition of done |
 | `/docs/NN_Name.md` | Numbered chapters. **Normative.** Each owns a distinct area. |
 | `/docs/31_ADR/` | Architecture Decision Records. Normative about the decision they record. |
 | `/docs/32_UX/` | Screen- and component-level design detail expanding `11` and `24` |
@@ -382,3 +383,4 @@ Recorded so they are not mistaken for oversights. None is committed.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial chapter |
+| 0.2 | 2026-09-02 | Design (architect role), owner-approved | §12.1: added `/README.md` as a platform-convention landing page; narrowed the root glob row to the other root files |
