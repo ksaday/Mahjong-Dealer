@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation not started |
+| **Status** | Design complete — implementation underway (Phase 0 and first slice of Phase 1) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -330,8 +330,14 @@ was copied from it: no code, no schema, no rule configuration, no business logic
 what was redesigned, and what was deliberately discarded is recorded in
 [INHERITANCE_AND_EXCLUSION_ANALYSIS.md](INHERITANCE_AND_EXCLUSION_ANALYSIS.md).
 
-No implementation exists. No packages have been chosen beyond those named in `ADR-0015`. No code has
-been written.
+Implementation has begun, in the order `IMPLEMENTATION_READINESS_CHECKLIST.md §6` prescribes: a
+`pnpm` workspace with the five packages named in `§4`, strict compiler configuration, and
+lint-enforced dependency and purity gates (Phase 0); and, in `shared`, the tile face codec, the
+branded types for concealed material, the `NoConcealed<T>` guard, and its proof file (the first
+slice of Phase 1). Library versions were pinned at TypeScript 5.9.3 rather than the newly-released
+7.x line, so that `typescript-eslint` — which the dependency-law and purity lint gates depend on —
+remains compatible; this is an implementation-time choice under `ADR-0015`, not a revision of it.
+No database, server, or client code exists yet.
 
 ---
 

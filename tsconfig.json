@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/dealer-core" },
+    { "path": "packages/db" },
+    { "path": "packages/server" },
+    { "path": "packages/web" }
+  ]
+}

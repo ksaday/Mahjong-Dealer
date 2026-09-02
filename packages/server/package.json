@@ -1,0 +1,17 @@
+{
+  "name": "@mahjong-dealer/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mahjong-dealer/dealer-core": "workspace:*",
+    "@mahjong-dealer/db": "workspace:*",
+    "@mahjong-dealer/shared": "workspace:*"
+  }
+}

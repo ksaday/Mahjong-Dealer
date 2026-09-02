@@ -95,5 +95,8 @@ belong in this system at any layer.
 
 ## Status
 
-Design complete. Implementation has not started. No code, packages, migrations, or infrastructure
-exist in this repository.
+Design complete. Implementation has begun, following the phase order in
+[IMPLEMENTATION_READINESS_CHECKLIST.md §6](IMPLEMENTATION_READINESS_CHECKLIST.md). Phase 0
+(repository, strict compiler configuration, dependency-law and purity lint) and the first slice of
+Phase 1 (`shared`: the tile face codec, branded types, and the `NoConcealed<T>` guard with its proof
+file) are in place. No database, server, or client code exists yet.
