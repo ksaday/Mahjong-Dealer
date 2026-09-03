@@ -1,0 +1,152 @@
+/* Global tokens and baseline (docs/24_Accessibility.md §3, §4). */
+:root {
+  --color-bg: #0f1417;
+  --color-surface: #1a2126;
+  --color-text: #f2f5f6; /* ~14.5:1 on --color-surface, exceeds the 7:1 floor (docs/24 §3) */
+  --color-text-muted: #c3ccd1; /* ~8.9:1 on --color-surface */
+  --color-accent: #5fb3ff;
+  --color-border: #4d5a61; /* ~4.6:1 on --color-surface, clears the 4.5:1 non-text floor */
+  --color-danger: #ff8a80;
+  --color-focus: #ffd54f; /* never relied on alone: the ring also changes shape (outline) */
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --target-min: 44px; /* docs/24 §3 */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* 2px minimum, 3:1 against adjacent colours, never colour alone (docs/24 §3). */
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+a,
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  min-height: var(--target-min);
+  min-width: var(--target-min);
+  cursor: pointer;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-accent);
+  color: #06202f;
+}
+
+.skip-link:focus {
+  left: var(--space-4);
+  top: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.field input {
+  min-height: var(--target-min);
+  padding: 0 var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.field-hint {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: 0.875rem;
+}
+
+.button-primary {
+  background: var(--color-accent);
+  color: #06202f;
+  border: none;
+  border-radius: 4px;
+  padding: 0 var(--space-6);
+  font-weight: 600;
+}
+
+.button-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button-link {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  text-decoration: underline;
+  padding: 0;
+}
+
+.screen {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.toast-region {
+  position: fixed;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 200;
+}
+
+.toast {
+  background: var(--color-surface);
+  border: 1px solid var(--color-danger);
+  color: var(--color-text);
+  padding: var(--space-3) var(--space-4);
+  border-radius: 4px;
+  max-width: 24rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
