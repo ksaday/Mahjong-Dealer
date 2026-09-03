@@ -80,7 +80,8 @@ export interface SeatView {
   readonly ownHand: readonly OwnTile[];
   readonly commitment: string | null;
   readonly outcome: GameOutcome | null;
-  readonly paused: { readonly requestedBy: Seat } | null;
+  /** `requestedBy` is an array, not the live `ReadonlySet<Seat>` (`state.ts`'s `PauseState`) — `SeatView` is JSON-bound eventually, and a Set doesn't survive that. */
+  readonly paused: { readonly requestedBy: readonly Seat[] } | null;
   readonly passRound: PublicPassRound | null;
   readonly correction: PublicCorrection | null;
   readonly concludingProcess: PublicConcludingProcess | null;
@@ -211,7 +212,7 @@ function projectLive(
     ownHand,
     commitment: state.commitment,
     outcome: null,
-    paused: state.paused,
+    paused: state.paused === null ? null : { requestedBy: [...state.paused.requestedBy] },
     passRound,
     correction,
     concludingProcess,

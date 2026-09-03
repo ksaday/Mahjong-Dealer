@@ -51,8 +51,17 @@ export interface CorrectionState {
   readonly responses: Readonly<Partial<Record<Seat, "accept" | "reject">>>;
 }
 
+/**
+ * Multi-holder (docs/22 §5.2): an explicit `request_pause` and an
+ * auto-pause-on-absence are "separate" holds that can coexist for
+ * different seats — "if both hold, the table stays paused until both
+ * clear." Each seat in `requestedBy` clears only its own hold via its own
+ * `request_resume`; the table resumes once the set is empty. A single
+ * `Seat` here would let one seat's return silently clear another seat's
+ * still-live hold, which is exactly the bug this shape prevents.
+ */
 export interface PauseState {
-  readonly requestedBy: Seat;
+  readonly requestedBy: ReadonlySet<Seat>;
 }
 
 export interface DeclarationProcess {

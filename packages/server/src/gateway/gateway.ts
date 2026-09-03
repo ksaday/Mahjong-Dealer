@@ -8,9 +8,10 @@
 // byte-based backpressure tracking, session-revocation polling
 // (`checkSessionRevocation`, docs/12 §4.3, backed by `AuthService.
 // isSessionActive` once auth was built), and auto-pause on disconnection
-// (`autoPauseOnAbsence`/`autoResumeOnReturn`, docs/22 §5 — see their own
-// doc comments for the two gaps that remain even so: single-holder
-// `PauseState` and the wire `reason` field). Heartbeats (docs/12 §7) are
+// (`autoPauseOnAbsence`/`autoResumeOnReturn`, docs/22 §5, correctly
+// multi-holder since `PauseState.requestedBy` became a `ReadonlySet<Seat>`
+// — see `autoPauseOnAbsence`'s own doc comment for the one gap that
+// remains: the wire `reason` field). Heartbeats (docs/12 §7) are
 // a real WebSocket protocol ping/pong loop, entirely in `ws-server.ts`'s
 // `startHeartbeat` — invisible to this transport-agnostic module, which
 // only ever learns of a heartbeat-detected loss the same way it learns of
@@ -233,18 +234,18 @@ export class TableGateway {
    * "the host issues the same `request_pause` [dealer-core] implements
    * once it detects an absence" (dealer-core's own `state.ts` module
    * comment). Blind by design — `applyRequestPause` already rejects
-   * outside `in_play`/`concluding` and while already paused, so this
-   * gateway needs no lifecycle check of its own; a rejection here is a
-   * silent no-op, not an error, since nothing asked for confirmation.
+   * outside `in_play`/`concluding` and when this seat already holds a
+   * pause, so this gateway needs no lifecycle check of its own; a
+   * rejection here is a silent no-op, not an error, since nothing asked
+   * for confirmation.
    *
-   * Scope note: `PauseState.requestedBy` holds exactly one seat
-   * (dealer-core, Phase 2). If seat A is already auto-paused and seat B
-   * also goes absent, B's own `request_pause` is rejected — the table
-   * stays paused (already the correct externally-visible state) but B's
-   * absence is not itself recorded, so docs/22 §5.2's "if both hold, stays
-   * paused until both clear" is not fully realized. Fixing that needs a
-   * multi-holder `PauseState`, a dealer-core model change outside this
-   * gateway slice's scope.
+   * Correctly multi-holder (docs/22 §5.2's "if both hold, stays paused
+   * until both clear"): `PauseState.requestedBy` is a `ReadonlySet<Seat>`
+   * (`state.ts`'s own doc comment), so if seat A is already auto-paused
+   * and seat B also goes absent, B's own `request_pause` succeeds and
+   * adds its own hold — the table only actually resumes once every
+   * holder, A's and B's alike, has called `request_resume` (A returning
+   * does not silently clear B's still-live absence).
    *
    * Known gap, surfaced rather than hidden: docs/22 §5 specifies
    * `TablePaused { seat, reason: 'seat_absent' }` for this exact path, but

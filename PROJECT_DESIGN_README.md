@@ -611,19 +611,23 @@ success, so already-connected seats see `TablePaused`/`TableResumed` live, the s
 player-issued command uses.
 
 Building the first test surfaced two gaps, both left unfixed and documented rather than papered over
-in the test:
+in the test at the time:
 
-- **`PauseState` holds exactly one seat** (`requestedBy`, dealer-core Phase 2). If seat A is already
-  auto-paused and seat B also goes absent, B's own `request_pause` is rejected — the table stays
-  paused (already the correct externally-visible state) but B's absence is never itself recorded, so
-  docs/22 §5.2's "if both hold, stays paused until both clear" isn't fully realized. Fixing it needs a
-  multi-holder `PauseState`, a dealer-core model change this slice didn't make.
+- **`PauseState` held exactly one seat** (`requestedBy`, dealer-core Phase 2). If seat A was already
+  auto-paused and seat B also went absent, B's own `request_pause` was rejected — the table stayed
+  paused (already the correct externally-visible state) but B's absence was never itself recorded, so
+  docs/22 §5.2's "if both hold, stays paused until both clear" wasn't fully realized. **Closed later**:
+  `PauseState.requestedBy` is now a `ReadonlySet<Seat>` (`dealer-core/src/state/state.ts`), with
+  `applyRequestPause`/`applyRequestResume` (`commands/presence.ts`) generalized so each seat's hold is
+  independent and the table resumes only once every hold has cleared — round-tripped through
+  `checkpoint.ts` and `projector/project.ts` too, converting to/from a plain array at both JSON
+  boundaries the same way `revealedHands` already does.
 - **The wire event's `reason` field reads `"requested"`, never docs/22 §5's `"seat_absent"`** — a test
   had to be corrected to expect the former after first asserting the latter. `toWireEvent` hardcodes
   the string because dealer-core's own `request_pause` command and `TablePaused` event carry no reason
   at all; distinguishing the two needs a reason to travel through dealer-core's command/event types,
   which is its own small design question (command-supplied, or actor-overridden after the fact?) left
-  to a future slice.
+  to a future slice. **Still open.**
 
 **Heartbeat scheduling (docs/12 §7) is now built, closing the last flagged gap in Phase 5's
 gateway.** It lives entirely in `ws-server.ts` (and, reused, `multi-table-router.ts`) as a real

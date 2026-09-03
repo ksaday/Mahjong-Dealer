@@ -15,7 +15,6 @@ import type {
   GameOutcome,
   GameState,
   PassRoundState,
-  PauseState,
   TileLocations,
 } from "../state/state.js";
 
@@ -23,6 +22,11 @@ interface CheckpointTile {
   readonly handle: TileHandle;
   readonly face: Face;
   readonly copy: number;
+}
+
+/** `PauseState.requestedBy` is a `ReadonlySet<Seat>` in live state; JSON has no Set, so the checkpoint payload carries it as an array — the same conversion `revealedHands` already gets below. */
+interface CheckpointPauseState {
+  readonly requestedBy: readonly Seat[];
 }
 
 interface CheckpointLivePart {
@@ -33,7 +37,7 @@ interface CheckpointLivePart {
   readonly commitment: string;
   readonly revealedHands: readonly Seat[];
   readonly nextExposureId: number;
-  readonly paused: PauseState | null;
+  readonly paused: CheckpointPauseState | null;
   readonly correction: CorrectionState | null;
 }
 
@@ -91,7 +95,7 @@ export function checkpoint(state: GameState): string {
     commitment: state.commitment,
     revealedHands: [...state.revealedHands],
     nextExposureId: state.nextExposureId,
-    paused: state.paused,
+    paused: state.paused === null ? null : { requestedBy: [...state.paused.requestedBy] },
     correction: state.correction,
   };
 
@@ -177,7 +181,7 @@ function buildState(payload: CheckpointPayload): GameState {
     commitment: live.commitment,
     revealedHands: new Set(live.revealedHands),
     nextExposureId: live.nextExposureId,
-    paused: live.paused,
+    paused: live.paused === null ? null : { requestedBy: new Set(live.paused.requestedBy) },
     correction: live.correction,
   };
 

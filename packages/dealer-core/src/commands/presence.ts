@@ -14,22 +14,35 @@ import type { GameState } from "../state/state.js";
 
 type Extracted<T extends Command["type"]> = Extract<Command, { type: T }>;
 
+/**
+ * Multi-holder (docs/22 §5.2, `state.ts`'s `PauseState` doc comment): a
+ * seat already holding a pause gets `NOT_IN_PHASE` for requesting again
+ * (nothing changes), but a *different* seat may add its own hold to an
+ * already-paused table — the table was already externally `TABLE_PAUSED`,
+ * and this seat's own absence or request is still worth recording and
+ * announcing (`TablePaused` fires for every seat that holds, not only the
+ * first).
+ */
 export function applyRequestPause(state: GameState, command: Extracted<"request_pause">): ApplyResult {
   if (state.lifecycle !== "in_play" && state.lifecycle !== "concluding") return reject("NOT_IN_PHASE");
-  if (state.paused !== null) return reject("NOT_IN_PHASE"); // already paused
+  if (state.paused !== null && state.paused.requestedBy.has(command.seat)) return reject("NOT_IN_PHASE"); // this seat already holds a pause
 
-  return ok({ ...state, seq: state.seq + 1, paused: { requestedBy: command.seat } }, [
+  const requestedBy = new Set(state.paused?.requestedBy);
+  requestedBy.add(command.seat);
+  return ok({ ...state, seq: state.seq + 1, paused: { requestedBy } }, [
     { type: "TablePaused", seat: command.seat },
   ]);
 }
 
+/** Only the requester releases their own hold (docs/05 §10); the table resumes only once every hold has cleared (docs/22 §5.2). */
 export function applyRequestResume(state: GameState, command: Extracted<"request_resume">): ApplyResult {
   if (state.lifecycle !== "in_play" && state.lifecycle !== "concluding") return reject("NOT_IN_PHASE");
-  if (state.paused === null) return reject("NOT_IN_PHASE"); // nothing to resume
-  // Only the requester releases their own pause (docs/05 §10).
-  if (state.paused.requestedBy !== command.seat) return reject("NOT_IN_PHASE");
+  if (state.paused === null || !state.paused.requestedBy.has(command.seat)) return reject("NOT_IN_PHASE"); // nothing to resume for this seat
 
-  return ok({ ...state, seq: state.seq + 1, paused: null }, [
+  const requestedBy = new Set(state.paused.requestedBy);
+  requestedBy.delete(command.seat);
+  const paused = requestedBy.size === 0 ? null : { requestedBy };
+  return ok({ ...state, seq: state.seq + 1, paused }, [
     { type: "TableResumed", seat: command.seat },
   ]);
 }

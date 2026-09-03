@@ -411,7 +411,7 @@ describe("checkSessionRevocation (docs/12 §4.3)", () => {
 });
 
 /** `paused` only exists on `InPlayGameState`/`ConcludingGameState` — narrows the discriminated union for the assertions below. */
-function pausedBy(actor: TableActor): Seat | null {
+function pausedBy(actor: TableActor): ReadonlySet<Seat> | null {
   const state = actor.gameStateSnapshot;
   if (state.lifecycle !== "in_play" && state.lifecycle !== "concluding") return null;
   return state.paused?.requestedBy ?? null;
@@ -422,7 +422,7 @@ describe("auto-pause on disconnection (docs/22 §5)", () => {
     const { actor, seats } = setUpDealtGame();
     seats.east.handle.onClose();
 
-    expect(pausedBy(actor)).toBe("east");
+    expect(pausedBy(actor)).toEqual(new Set(["east"]));
     const paused = seats.south.socket.framesOfType("event").find(
       (f) => (f["ev"] as Record<string, unknown>)["type"] === "TablePaused",
     );
@@ -437,7 +437,7 @@ describe("auto-pause on disconnection (docs/22 §5)", () => {
   it("clears the pause when the same seat rebinds, and does not touch an unrelated pause", () => {
     const { actor, tickets, gateway, seats } = setUpDealtGame();
     seats.east.handle.onClose();
-    expect(pausedBy(actor)).toBe("east");
+    expect(pausedBy(actor)).toEqual(new Set(["east"]));
 
     bindSeat(gateway, tickets, "east"); // reconnect
     expect(pausedBy(actor)).toBeNull();
@@ -450,15 +450,30 @@ describe("auto-pause on disconnection (docs/22 §5)", () => {
     );
   });
 
-  it("does not let a returning seat clear a different seat's own pause", () => {
+  it("does not let a returning seat clear a different seat's own pause (docs/22 §5.2: 'if both hold, stays paused until both clear')", () => {
     const { actor, tickets, gateway, seats } = setUpDealtGame();
     seats.south.send({ t: "cmd", cmd: "request_pause" }); // south pauses deliberately, while still connected
-    expect(pausedBy(actor)).toBe("south");
+    expect(pausedBy(actor)).toEqual(new Set(["south"]));
 
-    seats.east.handle.onClose(); // east's own auto-pause is rejected — already paused by south
-    bindSeat(gateway, tickets, "east"); // east's own auto-resume is rejected too — not east's pause to clear
+    seats.east.handle.onClose(); // east's own auto-pause adds a second, independent hold
+    expect(pausedBy(actor)).toEqual(new Set(["south", "east"]));
 
-    expect(pausedBy(actor)).toBe("south");
+    bindSeat(gateway, tickets, "east"); // east's own auto-resume clears only east's hold
+    expect(pausedBy(actor)).toEqual(new Set(["south"])); // south's explicit hold is untouched — still paused
+  });
+
+  it("stays paused until both of two independently-absent seats return (the multi-holder case docs/22 §5.2 requires)", () => {
+    const { actor, tickets, gateway, seats } = setUpDealtGame();
+    seats.east.handle.onClose(); // first absence
+    seats.west.handle.onClose(); // a second, independent absence while already paused
+
+    expect(pausedBy(actor)).toEqual(new Set(["east", "west"]));
+
+    bindSeat(gateway, tickets, "east"); // east returns — west is still absent
+    expect(pausedBy(actor)).toEqual(new Set(["west"])); // NOT null: this is exactly the bug a single-holder PauseState would have missed
+
+    bindSeat(gateway, tickets, "west"); // west returns too — now genuinely resumed
+    expect(pausedBy(actor)).toBeNull();
   });
 
   it("is a harmless no-op outside in_play/concluding (no game started)", () => {
