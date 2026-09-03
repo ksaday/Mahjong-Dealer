@@ -128,5 +128,15 @@ append-only triggers on the event and audit logs, and column-level `REVOKE`/`GRA
 general application role `SELECT` on either encrypted `private_state` column — plus a UUIDv7
 generator and a minimal migration runner (plain SQL rather than an ORM, so that DDL stays exact).
 Registration, login, and session issuance — the rest of Phase 3 — are `server`'s job against this
-schema, not yet built. 168 tests passing overall. Still nothing in `web`; `bind`/`resume`/`ping` and
-real connect tickets remain gateway/Phase 5 work.
+schema, not yet built.
+
+Phase 5's gateway is in `server`: binding (single-use connect tickets, one connection per seat, bind
+deadline), the full `docs/13_Input_Integrity.md §9` command pipeline (`cseq` sequencing, rate
+limiting, structural schema validation, `cmdId` idempotency, staleness checking on the five
+order-sensitive commands), resumption with a 200-event backlog and a full-view fallback beyond it,
+and byte-based backpressure tracking — all written against a transport-agnostic `SocketLike`
+interface and unit-tested with no real network, then wired to a real `ws`-based WebSocket server and
+proven against an actual socket in a smoke test. Not built: heartbeat scheduling and session-
+revocation polling (both need a real timer loop this slice doesn't add, and revocation needs the
+session store Phase 3's auth half doesn't build yet). 186 tests passing overall. Still nothing in
+`web`.

@@ -71,6 +71,8 @@ export interface TableActorOptions {
   readonly correctionWindow?: number;
 }
 
+export type SubmitOutcome = { readonly ok: true; readonly seq: number } | { readonly ok: false; readonly code: RejectionCode };
+
 export interface ActorSnapshot {
   readonly table: Table;
   readonly seq: number;
@@ -100,6 +102,8 @@ interface DispatchRejection {
   readonly code: RejectionCode;
 }
 type DispatchResult = DispatchOk | DispatchRejection;
+
+const BACKLOG_DEPTH = 200;
 
 function wrapCore(events: readonly DealerEvent[]): readonly EventSource[] {
   return events.map((event) => ({ kind: "core" as const, event }));
@@ -189,12 +193,20 @@ export class TableActor {
     return actor;
   }
 
-  submit<N extends CommandName>(seat: Seat, cmd: N, params: CommandParamsMap[N]): void {
+  /**
+   * Returns a summary (success + resulting seq, or the rejection code) so
+   * the gateway (docs/12, docs/13 §4) can build a wire `ack`/`reject`
+   * frame carrying the client's `cmdId` — which this actor, having no
+   * concept of the wire envelope, does not itself produce. The resulting
+   * `event`/`reject` frames for every seat are still available via
+   * `framesFor`, as before.
+   */
+  submit<N extends CommandName>(seat: Seat, cmd: N, params: CommandParamsMap[N]): SubmitOutcome {
     const result = this.dispatch(seat, cmd, params);
 
     if (!result.ok) {
       this.pushFrame(seat, { kind: "reject", code: result.code, view: this.viewFor(seat) });
-      return;
+      return { ok: false, code: result.code };
     }
 
     this.seq += 1;
@@ -215,6 +227,8 @@ export class TableActor {
         this.pushFrame(viewer, { kind: "event", seq: this.seq, ev: this.applySeqOverride(wireEvent, result), view });
       }
     }
+
+    return { ok: true, seq: this.seq };
   }
 
   private applySeqOverride(event: TableEvent, result: DispatchOk): TableEvent {
@@ -231,7 +245,14 @@ export class TableActor {
   }
 
   private pushFrame(seat: Seat, frame: ActorFrame): void {
-    this.frameLog[seat].push(frame);
+    const log = this.frameLog[seat];
+    log.push(frame);
+    // Backlog depth: 200 events per table, in memory (docs/12 §8). Beyond
+    // that, resumption falls back to a full seat view rather than backlog
+    // replay — cheaper anyway once the gap is that large.
+    if (log.length > BACKLOG_DEPTH) {
+      log.splice(0, log.length - BACKLOG_DEPTH);
+    }
   }
 
   private dispatch<N extends CommandName>(seat: Seat, cmd: N, params: CommandParamsMap[N]): DispatchResult {

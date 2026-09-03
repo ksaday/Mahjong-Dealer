@@ -12,6 +12,10 @@
   "dependencies": {
     "@mahjong-dealer/dealer-core": "workspace:*",
     "@mahjong-dealer/db": "workspace:*",
-    "@mahjong-dealer/shared": "workspace:*"
+    "@mahjong-dealer/shared": "workspace:*",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
   }
 }

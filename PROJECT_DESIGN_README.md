@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0-2 complete; Phase 3's schema and Phase 4's table actor started) |
+| **Status** | Design complete — implementation underway (Phase 0-2 complete; Phase 3's schema, Phase 4's table actor, and Phase 5's gateway started) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -439,7 +439,46 @@ started without being asked. The migrations are therefore verified statically (s
 reading the SQL text) rather than by an integration suite against a live database — a real gap
 against `docs/26 §7`'s `PersistenceHarness`, worth closing before this schema is trusted in anger.
 
-168 tests passing overall. No client code exists yet.
+**Phase 5's gateway** is started, in `server` (`docs/12_Realtime_WebSocket_Architecture.md`,
+`docs/13_Input_Integrity.md`), written against a transport-agnostic `SocketLike` interface so the
+protocol logic is unit-tested with no real network — the same discipline `dealer-core`'s
+`TableHarness` and `db`'s SQL smoke tests already follow — then wired to a real `ws`-based
+`attachWebSocketGateway` and proven against an actual socket in a smoke test (including a real
+origin-rejection close).
+
+Implemented: ticket-based binding (single-use redemption, one connection per seat with the newest
+replacing the older per `D-12-10`, a real `setTimeout`-driven 5-second bind deadline calling an
+injected-clock-testable `checkBindDeadline`); the full `docs/13 §9` pipeline in the order it
+specifies — `cseq` contiguity (closing on a gap, treating an exact repeat as a retransmission),
+per-connection rate limiting (a token bucket, closing after 20 consecutive throttled attempts),
+structural schema validation (reusing `shared`'s `COMMAND_SCHEMAS`), `cmdId` idempotency (replaying
+the original `ack`/`reject` without touching the actor again), and staleness checking on the five
+order-sensitive commands (`claim_discard`, `swap_exposed_tile`, `respond_correction`,
+`respond_declaration`, `respond_end_game`); resumption via a 200-event backlog capped in the actor
+itself, falling back to a full seat view beyond it; and backpressure tracked as bytes handed to the
+socket and not yet flushed (`docs/12 §9.1`'s point that the platform's own buffered-amount metric
+detects a stall too late).
+
+Two bugs worth naming because tests caught them, not review: `ping`/`resume` frames were originally
+special-cased *before* the `cseq`/rate-limit checks, meaning a flood of pings could bypass sequencing
+and throttling entirely — found by a rate-limit test that kept passing for the wrong reason (pings
+never reached the limiter). And `arrange_hand` — the one command that broadcasts nothing (`docs/10
+§5.7`) — advances the actor's `seq` without any client's delivery cursor moving, which would have made
+every connection look spuriously "stale" on its very next order-sensitive command; fixed by treating
+an all-silent broadcast round as evidence nobody actually fell behind.
+
+One design point, not a bug: `dealer-core`'s `GameState.seq` restarts at 1 on every new game, but
+the wire `seq` may never reset for a table's life. The table actor (`docs/05 §6`) already resolves
+this by keeping its own monotonic `seq`, and the gateway's staleness/resumption cursors are built on
+top of *that* number, never `GameState.seq` directly — this is the same seam flagged when the actor
+was built, now load-bearing for the gateway too.
+
+Not built: heartbeat scheduling (`docs/12 §7`) and session-revocation polling (`docs/12 §4.3`) — both
+need a real timer loop this slice doesn't add, and revocation additionally needs the session store
+Phase 3's auth half doesn't build yet. `bind`'s own rate limit (10 per session per minute, distinct
+from the per-connection command limit) is also not implemented.
+
+186 tests passing overall. No client code exists yet.
 
 ---
 
