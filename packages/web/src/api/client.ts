@@ -120,6 +120,15 @@ export function lockedUntil(error: ApiError): string | null {
   return null;
 }
 
+export interface SessionSummary {
+  readonly id: string;
+  readonly issued_at: string;
+  readonly last_seen_at: string;
+  readonly ip: string;
+  readonly user_agent: string | null;
+  readonly current: boolean;
+}
+
 export const api = {
   register(email: string, password: string, displayName: string): Promise<{ account_id: string }> {
     return request("/accounts", { method: "POST", body: { email, password, display_name: displayName } });
@@ -132,5 +141,19 @@ export const api = {
   },
   me(): Promise<Account> {
     return request("/accounts/me");
+  },
+  // S-07 Account (docs/32_UX/Screen_Inventory.md §3; docs/18_API_Design.md §4.1).
+  updateDisplayName(displayName: string): Promise<{ display_name: string }> {
+    return request("/accounts/me", { method: "PATCH", body: { display_name: displayName } });
+  },
+  /** Success revokes every other session for the account; this one survives (docs/33_API `POST /accounts/me/password`). */
+  changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    return request("/accounts/me/password", { method: "POST", body: { current_password: currentPassword, new_password: newPassword } });
+  },
+  listSessions(): Promise<{ sessions: readonly SessionSummary[] }> {
+    return request("/accounts/me/sessions");
+  },
+  revokeSession(id: string): Promise<void> {
+    return request(`/accounts/me/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 };

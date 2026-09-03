@@ -11,6 +11,8 @@ interface AuthContextValue {
   readonly state: AuthState;
   readonly login: (email: string, password: string) => Promise<LoginResult>;
   readonly logout: () => Promise<void>;
+  /** Re-fetches the account and updates `state` — used after S-07 changes `display_name`. */
+  readonly refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -51,7 +53,12 @@ export function AuthProvider({ children }: { readonly children: ReactNode }) {
     setState({ status: "anonymous" });
   }, []);
 
-  const value = useMemo(() => ({ state, login, logout }), [state, login, logout]);
+  const refresh = useCallback(async () => {
+    const account = await api.me();
+    setState({ status: "authenticated", account });
+  }, []);
+
+  const value = useMemo(() => ({ state, login, logout, refresh }), [state, login, logout, refresh]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

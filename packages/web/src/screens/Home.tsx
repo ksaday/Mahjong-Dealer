@@ -78,6 +78,15 @@ export function Home() {
   return (
     <main id="main" className="screen">
       <h1>Signed in as {state.account.display_name}</h1>
+      <p>
+        <button type="button" className="button-link" onClick={() => navigate("/account")}>
+          Account
+        </button>{" "}
+        ·{" "}
+        <button type="button" className="button-link" onClick={() => navigate("/help")}>
+          Help
+        </button>
+      </p>
 
       <section aria-labelledby="create-heading">
         <h2 id="create-heading">Create a table</h2>
