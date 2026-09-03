@@ -59,6 +59,10 @@ export const tablesApi = {
   close(tableId: string): Promise<void> {
     return request(`/tables/${tableId}`, { method: "DELETE" });
   },
+  /** FR-025 — leave the caller's own seat before a game begins. */
+  leave(tableId: string): Promise<void> {
+    return request(`/tables/${tableId}/me`, { method: "DELETE" });
+  },
   connectTicket(tableId: string): Promise<ConnectTicket> {
     return request(`/tables/${tableId}/connect-ticket`, { method: "POST" });
   },

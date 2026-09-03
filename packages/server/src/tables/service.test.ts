@@ -221,6 +221,65 @@ describe("closeTable (docs/33_API DELETE /tables/{id})", () => {
   });
 });
 
+describe("leaveSeat (FR-025, docs/33_API DELETE /tables/{id}/me)", () => {
+  it("leaves a seat while other seats remain occupied — the table stays open, closed_at untouched", async () => {
+    const { service, tables, account } = await setUp();
+    const alice = await account("Alice");
+    const bob = await account("Bob");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+    await service.joinTable(bob.id, bob.display_name, created.joinCode);
+
+    const result = await service.leaveSeat(bob.id, created.tableId);
+
+    expect(result).toEqual({ ok: true });
+    const row = await tables.findById(created.tableId);
+    expect(row?.status).toBe("open");
+    expect(row?.closed_at).toBeNull();
+  });
+
+  it("closes the table when the last occupant leaves (docs/05 §4)", async () => {
+    const { service, tables, account } = await setUp();
+    const alice = await account("Alice");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+
+    const result = await service.leaveSeat(alice.id, created.tableId);
+
+    expect(result).toEqual({ ok: true });
+    const row = await tables.findById(created.tableId);
+    expect(row?.status).toBe("closed");
+    expect(row?.closed_at).not.toBeNull();
+  });
+
+  it("returns NOT_FOUND for an account holding no seat at the table", async () => {
+    const { service, account } = await setUp();
+    const alice = await account("Alice");
+    const bob = await account("Bob");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+
+    const result = await service.leaveSeat(bob.id, created.tableId);
+    expect(result).toEqual({ ok: false, code: "NOT_FOUND" });
+  });
+
+  it("returns GAME_IN_PROGRESS while a game is dealing/in_play/concluding", async () => {
+    const { service, manager, account } = await setUp();
+    const accounts = await Promise.all(["Alice", "Bob", "Carol", "Dave"].map(account));
+    const created = await service.createTable(accounts[0]!.id, accounts[0]!.display_name);
+    if (!created.ok) throw new Error("expected success");
+    for (const a of accounts.slice(1)) {
+      await service.joinTable(a.id, a.display_name, created.joinCode);
+    }
+    const live = manager.get(created.tableId)!;
+    for (const seat of SEAT_ORDER) live.actor.submit(seat, "set_ready", undefined);
+    live.actor.submit("east", "start_deal", undefined);
+
+    const result = await service.leaveSeat(accounts[0]!.id, created.tableId);
+    expect(result).toEqual({ ok: false, code: "GAME_IN_PROGRESS" });
+  });
+});
+
 describe("issueConnectTicket (docs/33_API POST /tables/{id}/connect-ticket)", () => {
   it("issues a ticket for an occupant with a 30-second expiry", async () => {
     const { service, account } = await setUp();

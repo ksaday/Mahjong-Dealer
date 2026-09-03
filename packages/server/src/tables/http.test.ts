@@ -243,6 +243,38 @@ describe("DELETE /api/v1/tables/{id}", () => {
   });
 });
 
+describe("DELETE /api/v1/tables/{id}/me (FR-025)", () => {
+  it("lets an occupant leave their own seat", async () => {
+    const hostCookies = await registerAndLogin("mia@example.com", "Mia");
+    const created = await app.inject({ method: "POST", url: "/api/v1/tables", headers: authed(hostCookies) });
+    const { table_id: tableId, join_code: joinCode } = created.json();
+    const guestCookies = await registerAndLogin("noah@example.com", "Noah");
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/tables/join",
+      headers: authed(guestCookies),
+      payload: { join_code: joinCode },
+    });
+
+    const response = await app.inject({ method: "DELETE", url: `/api/v1/tables/${tableId}/me`, headers: authed(guestCookies) });
+    expect(response.statusCode).toBe(204);
+  });
+
+  it("returns 404 for an account holding no seat at the table", async () => {
+    const hostCookies = await registerAndLogin("olivia@example.com", "Olivia");
+    const created = await app.inject({ method: "POST", url: "/api/v1/tables", headers: authed(hostCookies) });
+    const { table_id: tableId } = created.json();
+
+    const strangerCookies = await registerAndLogin("peter@example.com", "Peter");
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/tables/${tableId}/me`,
+      headers: authed(strangerCookies),
+    });
+    expect(response.statusCode).toBe(404);
+  });
+});
+
 describe("POST /api/v1/tables/{id}/connect-ticket", () => {
   it("mints a single-use ticket for an occupant", async () => {
     const cookies = await registerAndLogin("mallory@example.com", "Mallory");

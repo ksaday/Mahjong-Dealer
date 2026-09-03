@@ -1,6 +1,7 @@
 // The REST surface for tables (docs/18_API_Design.md §4.2;
-// docs/33_API/REST_Endpoint_Catalog.md §4) — the remaining 5 of that
-// catalog's 14 endpoints, alongside `auth/http.ts`'s 8. Thin: every
+// docs/33_API/REST_Endpoint_Catalog.md §4) — 6 of that catalog's 22
+// endpoints (FR-025's `DELETE /tables/{id}/me` is the latest), alongside
+// `auth/http.ts`'s and `admin/http.ts`'s own shares. Thin: every
 // handler validates its own request shape, then delegates to
 // `TableService`. Session and CSRF verification are shared with
 // `auth/http.ts` via `session-guard.ts` — the same double-submit check,
@@ -153,6 +154,19 @@ export function registerTableRoutes(app: FastifyInstance, options: TableRoutesOp
     if (!(await requireSession(authService, request, reply))) return;
     if (!(await requireCsrf(request, reply))) return;
     const result = await tableService.closeTable(request.authSession!.account.id, request.params.id);
+    if (!result.ok) {
+      const status = result.code === "GAME_IN_PROGRESS" ? 409 : 404;
+      const message = result.code === "GAME_IN_PROGRESS" ? "A game is in progress." : "No such table.";
+      await reply.code(status).send(errorBody(result.code, message));
+      return;
+    }
+    await reply.code(204).send();
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/v1/tables/:id/me", async (request, reply) => {
+    if (!(await requireSession(authService, request, reply))) return;
+    if (!(await requireCsrf(request, reply))) return;
+    const result = await tableService.leaveSeat(request.authSession!.account.id, request.params.id);
     if (!result.ok) {
       const status = result.code === "GAME_IN_PROGRESS" ? 409 : 404;
       const message = result.code === "GAME_IN_PROGRESS" ? "A game is in progress." : "No such table.";

@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 18_API_Design.md |
-| **Status** | Ratified v0.3 — approved by the project owner, 2026-09-03 |
+| **Status** | Ratified v0.4 — approved by the project owner, 2026-09-03 |
 | **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns REST conventions, the endpoint catalog, and the REST security contract. Does **not** own the WebSocket protocol (`12`, `19`), authentication mechanics (`15`), or the error code catalog in detail (`33_API/Error_Code_Catalog.md`). |
 
@@ -12,7 +12,7 @@
 
 ## 1. Executive Summary
 
-The REST surface is deliberately thin: **twenty endpoints**, and none of them touches a live table.
+The REST surface is deliberately thin: **twenty-one endpoints**, and none of them touches a live table.
 
 The division is strict. REST handles what is independent and request-shaped — registering, logging
 in, creating a table, joining by code, minting the credential that opens a socket. Everything that
@@ -105,6 +105,7 @@ Format: **purpose · authentication → authorization · request → response ·
 | `POST /tables/join` | Join by code · session → player · `{ join_code }` → `200 { table_id, seat }` · Server assigns the seat; **no seat parameter accepted** (`NR-601`). A wrong code, an unknown table, and a full table all return `404` after equivalent work. Rate limited per account and per address. (`FR-022`–`FR-024`) |
 | `GET /tables/mine` | Own tables · session → player · — → `200 { tables[] }` · Identifier, status, seat, and the other seats' display names. **No game state.** Returns only tables where the requester holds a seat. (`FR-029`) |
 | `DELETE /tables/{id}` | Close a table · session → host of this table · — → `204` · `409` if a game is in `dealing`, `in_play`, or `concluding`. Bindings close; concealed material purged. `404` if not the host. (`FR-028`) |
+| `DELETE /tables/{id}/me` | Leave the requester's own seat · session → occupant of a seat at this table · — → `204` · `409` if a game is in `dealing`, `in_play`, or `concluding`. `404` if the requester holds no seat here. Closes the table too if this was the last occupied seat (`05 §4`). No seat parameter accepted (`NR-601`) — `me` is resolved server-side, same idiom as `/accounts/me`. (`FR-025`) |
 | `POST /tables/{id}/connect-ticket` | Mint a socket credential · session → occupant of a seat at this table · — → `201 { ticket }` · Single-use, 30-second expiry. Claims — account, session, table, seat — are held server-side; the client receives an opaque value. Rate limited per session. `404` if the requester holds no seat here. (`12 §4.1`) |
 
 `GET /tables/mine` deserves note: it is the only endpoint that mentions a table's other occupants,
@@ -170,7 +171,7 @@ Security-critical limits are durable (`15 §7`). A `429` carries `Retry-After`.
 | ID | Decision | Rationale |
 |---|---|---|
 | D-18-01 | No REST endpoint touches live table state | Removes REST from the privacy audit and avoids a second path to state with no ordering guarantee. |
-| D-18-02 | Twenty endpoints, and the surface fits on a page | A small API is one whose authorization can be reasoned about completely. The count was corrected from the original "fourteen" (`§1`, `33_API §1`), which undercounted `§4.3`'s six administrative endpoints from ratification onward; `POST /sessions/mfa` (`ADR-0017`) is the one genuinely new addition. |
+| D-18-02 | Twenty-one endpoints, and the surface fits on a page | A small API is one whose authorization can be reasoned about completely. The count was corrected from the original "fourteen" (`§1`, `33_API §1`), which undercounted `§4.3`'s six administrative endpoints from ratification onward; `POST /sessions/mfa` (`ADR-0017`) was the first genuinely new addition, and `DELETE /tables/{id}/me` (`FR-025`) the second — a previously-designed-but-unimplemented requirement finally given a transport, not new scope. |
 | D-18-03 | `404` where existence is sensitive | `403` confirms existence; uniform `404` prevents enumeration. |
 | D-18-04 | Registration returns `201` for a duplicate email and notifies the existing address | Prevents account enumeration while still informing the real owner. |
 | D-18-05 | Join code returned exactly once, stored irreversibly | A database read yields no usable codes, with one bounded exception: `D-18-11`. |
@@ -259,3 +260,4 @@ step-up-verification endpoint for a hardware authenticator, alongside `POST /ses
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial catalog: 14 endpoints |
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | `D-18-10` implemented for `POST /tables`; added `D-18-11` (the bounded join-code replay exception) and its risk |
 | 0.3 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: added `POST /sessions/mfa`; `D-18-12`; corrected the endpoint count from 14 to 20 (`§1`, `D-18-02`) |
+| 0.4 | 2026-09-03 | Design (architect role), owner-approved | Added `DELETE /tables/{id}/me` (`FR-025`, previously unbuilt) — leaving a seat before a game begins; corrected the endpoint count from 20 to 21 (`§1`, `D-18-02`) |

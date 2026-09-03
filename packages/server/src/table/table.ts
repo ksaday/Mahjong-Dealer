@@ -93,7 +93,14 @@ export interface VacateSeatResult {
   readonly table: Table;
 }
 
-/** A seat may be vacated only while no game is in progress (docs/05 §5.2, NR-202). */
+/**
+ * A seat may be vacated only while no game is in progress (docs/05 §5.2, NR-202).
+ * Deliberately doesn't decide whether an emptied table should close (docs/05
+ * §4's "last seat vacated" edge) — that cascade lives one level up, in
+ * `TableActor.vacateSeat`, which reuses `forceClose`'s existing machinery
+ * rather than this pure function computing a third status alongside the
+ * seated->open transition below.
+ */
 export function vacateSeat(
   table: Table,
   seat: Seat,
@@ -129,6 +136,11 @@ export function setConnection(table: Table, seat: Seat, connection: SeatConnecti
 
 export function allReady(table: Table): boolean {
   return SEAT_ORDER.every((seat) => table.seats[seat].occupant !== null && table.seats[seat].ready);
+}
+
+/** docs/05 §4: "last seat vacated" is one of the three ways an OPEN table becomes CLOSED — `TableActor.vacateSeat` uses this to decide when to cascade into `forceClose`. */
+export function isEmpty(table: Table): boolean {
+  return SEAT_ORDER.every((seat) => table.seats[seat].occupant === null);
 }
 
 export function closeTable(table: Table): Table {

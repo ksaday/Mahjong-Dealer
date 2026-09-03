@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allReady, closeTable, createTable, occupySeat, setConnection, setReady, vacateSeat } from "./table.js";
+import { allReady, closeTable, createTable, isEmpty, occupySeat, setConnection, setReady, vacateSeat } from "./table.js";
 
 describe("occupySeat (docs/05 §5, D-05-04)", () => {
   it("fills the lowest unoccupied seat in fixed order", () => {
@@ -114,5 +114,26 @@ describe("setConnection (docs/22 §3, FR-140)", () => {
     table = setConnection(table, "east", "connected");
     expect(table.seats.east.connection).toBe("connected");
     expect(table.seats.south.connection).toBe("absent");
+  });
+});
+
+describe("isEmpty (docs/05 §4, FR-025)", () => {
+  it("is true for a freshly created table", () => {
+    expect(isEmpty(createTable("t1"))).toBe(true);
+  });
+
+  it("is false once any seat is occupied", () => {
+    const result = occupySeat(createTable("t1"), "p1", "Alice");
+    if (!result.ok) throw new Error("unreachable");
+    expect(isEmpty(result.table)).toBe(false);
+  });
+
+  it("is false for a fully seated table", () => {
+    let table = createTable("t1");
+    for (const id of ["p1", "p2", "p3", "p4"]) {
+      const result = occupySeat(table, id, id);
+      if (result.ok) table = result.table;
+    }
+    expect(isEmpty(table)).toBe(false);
   });
 });

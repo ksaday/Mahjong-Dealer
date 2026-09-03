@@ -83,4 +83,26 @@ describe("tables api (docs/33_API/REST_Endpoint_Catalog.md §4)", () => {
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).code).toBe("GAME_IN_PROGRESS");
   });
+
+  it("leaves a seat (FR-025)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await tablesApi.leave("t1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/tables/t1/me");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("propagates GAME_IN_PROGRESS on leave", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(409, { error: { code: "GAME_IN_PROGRESS", message: "A game is in progress." } })),
+    );
+
+    const error = await tablesApi.leave("t1").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("GAME_IN_PROGRESS");
+  });
 });

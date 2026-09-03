@@ -558,8 +558,13 @@ describe("seat presence (docs/19 §6.1, docs/22, FR-140)", () => {
 
   it("vacateSeat broadcasts SeatVacated to every seat", () => {
     const actor = newActor(2);
-    const occupied = actor.occupySeat("p1", "Alice");
-    if (!occupied.ok) throw new Error("unreachable");
+    // Two occupants, not one — so vacating "east" leaves the table
+    // non-empty, isolating this test from FR-025's auto-close cascade
+    // (its own describe block below).
+    const first = actor.occupySeat("p1", "Alice");
+    if (!first.ok) throw new Error("unreachable");
+    const second = actor.occupySeat("p2", "Bob");
+    if (!second.ok) throw new Error("unreachable");
     const before = actor.seqNumber;
 
     actor.vacateSeat("east");
@@ -570,6 +575,38 @@ describe("seat presence (docs/19 §6.1, docs/22, FR-140)", () => {
         expect.objectContaining({ kind: "event", ev: { type: "SeatVacated", seat: "east" } }),
       );
     }
+  });
+
+  it("vacating the table's only occupied seat cascades into TableClosed (docs/05 §4, FR-025)", () => {
+    const actor = newActor(20);
+    const occupied = actor.occupySeat("p1", "Alice");
+    if (!occupied.ok) throw new Error("unreachable");
+
+    const result = actor.vacateSeat("east");
+
+    expect(result).toEqual({ ok: true });
+    expect(actor.tableSnapshot.status).toBe("closed");
+    expect(actor.currentGameId).toBeNull();
+    for (const seat of SEAT_ORDER) {
+      expect(actor.framesFor(seat).at(-1)).toEqual(
+        expect.objectContaining({
+          kind: "event",
+          ev: { type: "TableClosed", reason: "the table's last seat was vacated" },
+        }),
+      );
+    }
+  });
+
+  it("vacating one of several occupied seats does not auto-close the table", () => {
+    const actor = newActor(21);
+    const first = actor.occupySeat("p1", "Alice");
+    if (!first.ok) throw new Error("unreachable");
+    const second = actor.occupySeat("p2", "Bob");
+    if (!second.ok) throw new Error("unreachable");
+
+    actor.vacateSeat("east");
+
+    expect(actor.tableSnapshot.status).toBe("open");
   });
 
   it("setSeatConnection: connected -> away fires SeatDisconnected{reason:'away'} (docs/22 §4's first miss)", () => {

@@ -12,7 +12,7 @@
 
 ## 1. The route inventory is closed
 
-The twenty-one endpoints below are the **complete** REST surface. A registered route not listed here
+The twenty-two endpoints below are the **complete** REST surface. A registered route not listed here
 fails `TC-A10`.
 
 Closing the inventory matters because the surface's most important property is what it lacks: no
@@ -168,6 +168,17 @@ Response:  204
 Errors:    404 NOT_FOUND (also when not the host) · 409 GAME_IN_PROGRESS
 ```
 
+### `DELETE /tables/{id}/me`
+```
+Auth: session → occupant of a seat at this table
+Response:  204
+Errors:    404 NOT_FOUND (also when the requester holds no seat here) · 409 GAME_IN_PROGRESS
+```
+Leaves the requester's own seat (`FR-025`); no seat parameter is accepted (`NR-601`) — `me` names the
+caller's own occupancy the same way `/accounts/me` does, resolved server-side exactly like
+`/tables/{id}/connect-ticket` already resolves the caller's own seat. If this was the table's last
+occupied seat, the table also closes (`05 §4`).
+
 ### `POST /tables/{id}/connect-ticket`
 ```
 Auth: session → occupant of a seat at this table    Rate: 10/min per session
@@ -289,3 +300,4 @@ Machine-checked by `TC-A10`. A registered route matching any pattern below fails
 | 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `429 RATE_LIMITED` to `POST /accounts/me/password`'s error list, now that its durable limit is implemented |
 | 0.4 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: added `POST /sessions/mfa`; `mfa_required` on `POST /sessions`; corrected the route count from 14 to 20 (`§1`) |
 | 0.5 | 2026-09-03 | Design (architect role), owner-approved | Added `GET /healthz` (new `§6 Operational`) — the container readiness probe `27 §3.2` requires, previously unbuilt and unpathed; corrected the route count from 20 to 21 (`§1`); renumbered old `§6`–`§8` to `§7`–`§9` |
+| 0.6 | 2026-09-03 | Design (architect role), owner-approved | Added `DELETE /tables/{id}/me` (`FR-025`, previously unbuilt) — leaving a seat before a game begins, closing the table too if it was the last occupied seat (`05 §4`); corrected the route count from 21 to 22 (`§1`) |

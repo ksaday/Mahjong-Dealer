@@ -178,6 +178,50 @@ describe("Table (S-05, docs/32_UX/Screen_Inventory.md §3)", () => {
     expect(await screen.findByText("Home screen")).toBeInTheDocument();
   });
 
+  it("leaves the table and returns home (FR-025)", async () => {
+    vi.stubGlobal("WebSocket", TestSocket);
+    const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+      if (input === "/api/v1/accounts/me") return Promise.resolve(meResponse());
+      if (input === "/api/v1/tables/mine") return Promise.resolve(jsonResponse(200, { tables: [oneSeatTable] }));
+      if (input === "/api/v1/tables/t1/connect-ticket") {
+        return Promise.resolve(jsonResponse(201, { ticket: "tk1", expires_at: new Date().toISOString() }));
+      }
+      if (input === "/api/v1/tables/t1/me" && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      throw new Error(`unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderTable();
+    await user.click(await screen.findByRole("button", { name: "Leave table" }));
+
+    expect(await screen.findByText("Home screen")).toBeInTheDocument();
+  });
+
+  it("shows a toast and stays on the table when leaving fails", async () => {
+    vi.stubGlobal("WebSocket", TestSocket);
+    const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+      if (input === "/api/v1/accounts/me") return Promise.resolve(meResponse());
+      if (input === "/api/v1/tables/mine") return Promise.resolve(jsonResponse(200, { tables: [oneSeatTable] }));
+      if (input === "/api/v1/tables/t1/connect-ticket") {
+        return Promise.resolve(jsonResponse(201, { ticket: "tk1", expires_at: new Date().toISOString() }));
+      }
+      if (input === "/api/v1/tables/t1/me" && init?.method === "DELETE") {
+        return Promise.resolve(jsonResponse(409, { error: { code: "GAME_IN_PROGRESS", message: "A game is in progress." } }));
+      }
+      throw new Error(`unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderTable();
+    await user.click(await screen.findByRole("button", { name: "Leave table" }));
+
+    expect(await screen.findByText("A game is in progress.")).toBeInTheDocument();
+  });
+
   it("binds over the live socket and lets the seat toggle readiness", async () => {
     vi.stubGlobal("WebSocket", TestSocket);
     vi.stubGlobal(

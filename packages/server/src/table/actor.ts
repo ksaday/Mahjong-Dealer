@@ -58,6 +58,7 @@ import {
   allReady,
   closeTable,
   createTable,
+  isEmpty as isTableEmpty,
   occupySeat as occupyTableSeat,
   setConnection,
   setReady,
@@ -210,11 +211,27 @@ export class TableActor {
     return { ok: true, seat: result.seat };
   }
 
+  /**
+   * FR-025. docs/05 §4: vacating a table's *last* occupied seat cascades
+   * into `forceClose` — the same machinery host-close and administrative
+   * force-close already use, since the diagram treats all three as one
+   * transition ("last seat vacated" is listed alongside them on the same
+   * OPEN -> CLOSED edge). No checkpoint purge is needed for this cascade:
+   * `vacateSeat` only ever succeeds while `lifecycle` is `idle` or
+   * `concluded` — `idle` never had a checkpoint, and `concluded` already
+   * had its checkpoint purged synchronously by `CheckpointWriter.concludeAndPurge`
+   * (its own captures of `currentGameId`/`gameStateSnapshot` happen before
+   * its first `await`, so a later, network-arriving `leaveSeat` call can't
+   * race it — Node's single-threaded run-to-completion guarantees this).
+   */
   vacateSeat(seat: Seat): { readonly ok: true } | TableRejection {
     const result = vacateTableSeat(this.table, seat, isGameInProgress(this.gameState));
     if (!result.ok) return result;
     this.table = result.table;
     this.broadcastEvent({ type: "SeatVacated", seat });
+    if (isTableEmpty(this.table)) {
+      this.forceClose("the table's last seat was vacated");
+    }
     return { ok: true };
   }
 

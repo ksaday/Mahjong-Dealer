@@ -1,5 +1,5 @@
 // TableService: the business logic behind
-// docs/33_API/REST_Endpoint_Catalog.md §4 (the five table endpoints),
+// docs/33_API/REST_Endpoint_Catalog.md §4 (the six table endpoints),
 // independent of HTTP (http.ts is the thin Fastify wrapper) — the same
 // split as `auth/service.ts`/`auth/http.ts`.
 //
@@ -56,6 +56,8 @@ export interface MineTableSummary {
 }
 
 export type CloseTableResult = { readonly ok: true } | { readonly ok: false; readonly code: "NOT_FOUND" | "GAME_IN_PROGRESS" };
+
+export type LeaveSeatResult = { readonly ok: true } | { readonly ok: false; readonly code: "NOT_FOUND" | "GAME_IN_PROGRESS" };
 
 export type ConnectTicketResult =
   | { readonly ok: true; readonly ticket: string; readonly expiresAt: Date }
@@ -172,6 +174,32 @@ export class TableService {
     }
 
     await this.tables.setStatus(tableId, "closed", this.now());
+    return { ok: true };
+  }
+
+  /** FR-025: `DELETE /tables/{id}/me`. Resolves the caller's own seat the same way `issueConnectTicket` does — no seat parameter, matching NR-601. */
+  async leaveSeat(accountId: string, tableId: string): Promise<LeaveSeatResult> {
+    const live = this.manager.get(tableId);
+    if (live === undefined) return { ok: false, code: "NOT_FOUND" };
+
+    const seat = seatFor(live.actor.tableSnapshot, accountId);
+    if (seat === null) return { ok: false, code: "NOT_FOUND" };
+
+    const result = live.actor.vacateSeat(seat);
+    if (!result.ok) {
+      return result.code === "GAME_IN_PROGRESS" ? { ok: false, code: "GAME_IN_PROGRESS" } : { ok: false, code: "NOT_FOUND" };
+    }
+    live.gateway.deliverPendingFrames();
+
+    // Only stamp closed_at when vacateSeat's own docs/05 §4 cascade actually
+    // closed the table (setStatus treats any non-undefined third argument
+    // as "stamp it now," regardless of the status passed) — otherwise a
+    // normal leave-with-seats-remaining would wrongly mark a still-open
+    // table as closed.
+    const status = live.actor.tableSnapshot.status;
+    await this.tables.setStatus(tableId, status, status === "closed" ? this.now() : undefined);
+    await this.syncSeatsFromActor(tableId, live.actor.tableSnapshot);
+
     return { ok: true };
   }
 

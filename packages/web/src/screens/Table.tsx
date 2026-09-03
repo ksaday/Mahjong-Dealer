@@ -38,6 +38,7 @@ export function Table() {
 
   const [table, setTable] = useState<MyTable | null | undefined>(undefined);
   const [closing, setClosing] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [ackConcluded, setAckConcluded] = useState(false);
 
   const load = useCallback(() => {
@@ -100,6 +101,17 @@ export function Table() {
     } catch (error) {
       setClosing(false);
       show(error instanceof ApiError ? error.message : "Could not close the table.");
+    }
+  }
+
+  async function handleLeave() {
+    setLeaving(true);
+    try {
+      await tablesApi.leave(confirmedTableId);
+      navigate("/home");
+    } catch (error) {
+      setLeaving(false);
+      show(error instanceof ApiError ? error.message : "Could not leave the table.");
     }
   }
 
@@ -188,6 +200,9 @@ export function Table() {
         )}
       </section>
 
+      <button type="button" className="button-primary" onClick={() => void handleLeave()} disabled={leaving}>
+        {leaving ? "Leaving…" : "Leave table"}
+      </button>
       <button type="button" className="button-primary" onClick={() => void handleClose()} disabled={closing}>
         {closing ? "Closing…" : "Close table"}
       </button>
