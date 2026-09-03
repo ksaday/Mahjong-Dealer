@@ -3,11 +3,9 @@
 // endpoint. This module is the pure, testable half — building the
 // account row, an initial password, and the TOTP secret's `otpauth://`
 // URI — the same split `migrate.ts`'s `migrate()` keeps from a real
-// connection: a caller wires this to a live `Pool`/`AccountRepository`
-// and a CLI. That wiring is deployment-invocation machinery this
-// codebase doesn't have anywhere yet (no bootstrap entrypoint either,
-// `index.ts`'s own module comment) — a gap for the same future
-// deployment-tooling slice as `migrate()`'s own caller, not decided here.
+// connection: `scripts/provision-admin.ts` is the CLI wrapper that wires
+// this to a live `Pool`/`AccountRepository`, the same way
+// `packages/db/src/cli.ts` wraps `migrate()`.
 import { randomBytes } from "node:crypto";
 import type { AccountRole } from "@mahjong-dealer/db";
 import { hashPassword } from "./passwords.js";

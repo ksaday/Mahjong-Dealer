@@ -130,10 +130,12 @@ export class AdminService {
    * `POST /admin/tables/{id}/force-close` (`FR-161`) — the only
    * administrative action that touches a game. Closes the durable row
    * regardless of whether a live `TableActor` exists in this process (one
-   * may not, after a restart — crash recovery isn't built, docs/29, same
-   * gap `tables/manager.ts`'s own module comment already names); when one
-   * does, its gateway delivers `TableClosed` to every connected seat and
-   * its concealed material is discarded (`TableActor.forceClose`).
+   * may not: `main.ts` restores every non-closed table's actor at startup,
+   * docs/29, but a single table's own restore can still fail — a corrupt
+   * checkpoint marks only that table unavailable, `tables/manager.ts`'s
+   * `restoreLiveTables`); when one does, its gateway delivers `TableClosed`
+   * to every connected seat and its concealed material is discarded
+   * (`TableActor.forceClose`).
    */
   async forceCloseTable(actorAccountId: string, tableId: string, reason: string): Promise<ForceCloseTableResult> {
     const row = await this.tables.findById(tableId);

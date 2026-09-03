@@ -40,11 +40,12 @@ function readCookie(name: string): string | null {
 interface RequestOptions {
   readonly method?: string;
   readonly body?: unknown;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...options.headers };
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
   }

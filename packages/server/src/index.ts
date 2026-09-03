@@ -24,16 +24,14 @@
 // but had no real wrapper until now; `packages/db/src/cli.ts` is the
 // equivalent for `migrate()`.
 //
-// Still not built: checkpoint persistence to PostgreSQL (the
-// `checkpoints`/`correction_checkpoints` tables have no repository or
-// write path anywhere — docs/29's disaster-recovery objectives, a full
-// subsystem, not a wiring gap; `gateway.ts`'s `notifyShuttingDown` flags
-// where this bites graceful shutdown specifically) and the live table
-// registry's crash-recovery reconstruction from a checkpoint (see
-// tables/manager.ts's module comment — the same missing subsystem is why
-// this can't be built either). See table/actor.ts, gateway/gateway.ts,
-// auth/service.ts, admin/service.ts, and tables/service.ts's module
-// comments for further scope detail.
+// Checkpoint persistence to PostgreSQL (docs/29's disaster-recovery
+// objectives), the live table registry's crash-recovery reconstruction
+// from a checkpoint (`tables/manager.ts`'s `restoreLiveTables`), durable
+// `correction_checkpoints`/`cmdId` retention, and a second game on the
+// same table (FR-117) are all built now too — see table/actor.ts,
+// checkpoint/writer.ts, gateway/gateway.ts, auth/service.ts,
+// admin/service.ts, and tables/service.ts's module comments for scope
+// detail on each.
 
 export type { ActorFrame, ActorSnapshot, SubmitOutcome, TableActorOptions } from "./table/actor.js";
 export { TableActor } from "./table/actor.js";

@@ -2,10 +2,12 @@
 // the 5 endpoints alongside `client.ts`'s 8 accounts/sessions ones. Reuses
 // `request`/`ApiError` rather than a second HTTP implementation.
 //
-// Scope note: `Idempotency-Key` on `POST /tables` (D-18-10) is not sent
-// here — the server doesn't honour it yet either (flagged gap in
-// `server/src/tables/http.ts`), so sending one would claim a guarantee
-// that doesn't exist.
+// `Idempotency-Key` on `POST /tables` (D-18-10, D-18-11): `create` takes an
+// optional caller-minted key, sent as the `Idempotency-Key` header exactly
+// like `cmdId` (docs/13 §4.1) — generated once per intent, reused across
+// retries of that same intent, never once per transmission. The caller
+// (`screens/Home.tsx`) owns the key's lifetime, since only it knows what
+// "the same intent" means (one click of "Create a table," not one fetch).
 import { request } from "./client.js";
 
 export type Seat = "east" | "south" | "west" | "north";
@@ -42,8 +44,11 @@ export interface ConnectTicket {
 }
 
 export const tablesApi = {
-  create(): Promise<CreateTableResult> {
-    return request("/tables", { method: "POST" });
+  create(idempotencyKey?: string): Promise<CreateTableResult> {
+    return request("/tables", {
+      method: "POST",
+      ...(idempotencyKey !== undefined ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+    });
   },
   join(joinCode: string): Promise<JoinTableResult> {
     return request("/tables/join", { method: "POST", body: { join_code: joinCode } });

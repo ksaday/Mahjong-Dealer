@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client.js";
@@ -6,6 +6,7 @@ import { tablesApi, type MyTable } from "../api/tables.js";
 import { useAuth } from "../auth/AuthContext.js";
 import { rememberJoinCode } from "../tables/joinCodeStorage.js";
 import { useToast } from "../components/Toast.js";
+import { uuidv7 } from "../ws/uuidv7.js";
 
 // S-04 Home (docs/32_UX/Screen_Inventory.md §3): create a table, join by
 // code, and your seats. States: default, no seats, creating, joining, join
@@ -19,6 +20,8 @@ export function Home() {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinFailed, setJoinFailed] = useState(false);
+  /** Minted once per create intent, reused across retries (D-18-10, D-18-11) — a retried click after a lost response must not create a second table. Not cleared on failure: a genuine rejection (e.g. ALREADY_SEATED) isn't cached server-side anyway, so reusing the key costs nothing and still protects a network-drop retry. */
+  const createIdempotencyKeyRef = useRef<string | null>(null);
 
   const [mine, setMine] = useState<readonly MyTable[] | null>(null);
 
@@ -44,8 +47,9 @@ export function Home() {
 
   async function handleCreate() {
     setCreating(true);
+    createIdempotencyKeyRef.current ??= uuidv7();
     try {
-      const result = await tablesApi.create();
+      const result = await tablesApi.create(createIdempotencyKeyRef.current);
       rememberJoinCode(result.table_id, result.join_code);
       navigate(`/tables/${result.table_id}`);
     } catch (error) {

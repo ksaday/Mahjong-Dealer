@@ -77,6 +77,39 @@ describe("Home (S-04, docs/32_UX/Screen_Inventory.md §3)", () => {
     expect(sessionStorage.getItem("mahjong-dealer:join-code:t1")).toBe("ABCDEF");
   });
 
+  it("reuses the same Idempotency-Key across a retry after a failed create (D-18-10, D-18-11)", async () => {
+    const postInits: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+        if (input === "/api/v1/accounts/me") return Promise.resolve(meResponse());
+        if (input === "/api/v1/tables/mine") return Promise.resolve(jsonResponse(200, { tables: [] }));
+        if (input === "/api/v1/tables" && init?.method === "POST") {
+          postInits.push(init);
+          if (postInits.length === 1) {
+            return Promise.resolve(jsonResponse(503, { error: { code: "UNKNOWN", message: "Try again." } }));
+          }
+          return Promise.resolve(jsonResponse(201, { table_id: "t1", join_code: "ABCDEF", seat: "east" }));
+        }
+        throw new Error(`unexpected fetch: ${input}`);
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderHome();
+    await user.click(await screen.findByRole("button", { name: "Create a table" }));
+    expect(await screen.findByText("Try again.")).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Create a table" }));
+    expect(await screen.findByText("Table screen")).toBeInTheDocument();
+
+    expect(postInits).toHaveLength(2);
+    const firstKey = (postInits[0]?.headers as Record<string, string>)["Idempotency-Key"];
+    const secondKey = (postInits[1]?.headers as Record<string, string>)["Idempotency-Key"];
+    expect(firstKey).toBeTruthy();
+    expect(secondKey).toBe(firstKey);
+  });
+
   it("shows a generic join-failed message without distinguishing wrong code from full or nonexistent (FR-022)", async () => {
     vi.stubGlobal(
       "fetch",

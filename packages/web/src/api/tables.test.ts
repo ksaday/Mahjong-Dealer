@@ -26,6 +26,21 @@ describe("tables api (docs/33_API/REST_Endpoint_Catalog.md §4)", () => {
     expect(init.method).toBe("POST");
   });
 
+  it("sends the caller-supplied Idempotency-Key header, and omits it entirely when none is given (D-18-10)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse(201, { table_id: "t1", join_code: "ABCDEF", seat: "east" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await tablesApi.create("a-fixed-key");
+    const [, initWithKey] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((initWithKey.headers as Record<string, string>)["Idempotency-Key"]).toBe("a-fixed-key");
+
+    await tablesApi.create();
+    const [, initWithoutKey] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(Object.keys(initWithoutKey.headers as Record<string, string>)).not.toContain("Idempotency-Key");
+  });
+
   it("surfaces a wrong or unknown join code as NOT_FOUND, indistinguishably (FR-022)", async () => {
     vi.stubGlobal(
       "fetch",
