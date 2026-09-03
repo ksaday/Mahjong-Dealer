@@ -378,7 +378,22 @@ export class TableActor {
     }
 
     this.seq += 1;
+    const previousLifecycle: GameState["lifecycle"] = this.gameState.lifecycle;
     this.gameState = result.state;
+    // docs/05 §5.1, docs/09 §9 D-09-10: readiness clears when a game
+    // concludes, so each new game requires deliberate agreement. Guarded on
+    // the *previous* lifecycle, not just the current one — dispatchReadiness
+    // and dispatchCloseTable both return `state: this.gameState` unchanged
+    // (no apply() call), so without this guard every set_ready sent after
+    // conclusion (while readying up for the next game) would see
+    // lifecycle === "concluded" again and wipe out the very toggle just
+    // made. previousLifecycle is already "concluded" for those pass-through
+    // calls, so this only ever fires once, at the real transition.
+    if (previousLifecycle !== "concluded" && this.gameState.lifecycle === "concluded") {
+      for (const clearedSeat of SEAT_ORDER) {
+        this.table = setReady(this.table, clearedSeat, false);
+      }
+    }
     if (result.clearCheckpoints) {
       this.checkpoints.clear();
       this.commandReceipts.clear();
@@ -507,7 +522,15 @@ export class TableActor {
     if (this.table.status !== "seated" || !allReady(this.table)) {
       return { ok: false, code: "NOT_IN_PHASE" }; // docs/10 §4: four seats occupied, all ready
     }
-    const result = apply(this.gameState, { type: "start_deal", seat }, this.options.entropy);
+    // docs/09 §7's matrix: start_deal succeeds from CONCLUDED too (FR-117,
+    // D-09-10, D-10-14) — the diagram's own separate, unlabeled
+    // CONCLUDED -> IDLE edge ("table ready for another game"), folded here
+    // rather than into dealer-core's own apply(), which stays strictly
+    // idle-only (docs/10 §4's literal contract). Safe because
+    // dealOpeningHands(entropy) never reads the incoming state at all — a
+    // concluded state and a fresh idle one produce an identical deal.
+    const effectiveState = this.gameState.lifecycle === "concluded" ? createIdleState() : this.gameState;
+    const result = apply(effectiveState, { type: "start_deal", seat }, this.options.entropy);
     if (!result.ok) return result;
     this.gameId = randomUUID(); // a fresh durable row per deal (docs/17 §5.6) — the checkpoint's game_id
     return {

@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 10_Player_Action_Model.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the complete command catalog: every action a player can take, its parameters, its validations, the events it emits, and the visibility of each. Does **not** own the wire encoding (`19`, `33_API`), the state machine (`09`), or the interaction design (`11`). |
 
 ---
@@ -84,10 +84,13 @@ Mark this seat ready to begin, or withdraw it.
 
 ### `start_deal`
 Begin a game.
-**Parameters** none · **Validations** `M-4` (host; state `IDLE`; four seats occupied; all ready), `M-5`
+**Parameters** none · **Validations** `M-4` (host; state `IDLE` or `CONCLUDED`, `09 §7`; four seats
+occupied; all ready), `M-5`
 **Events** `WallBuilt` — `PUB`: wall length · `DealCommitmentPublished` — `PUB`: commitment ·
 `TilesDealt` — `PUB`: hand sizes, turn pointer; `OWN`: this seat's tiles
-**Notes** Atomic (`08 §7.1`). The only command that consumes entropy.
+**Notes** Atomic (`08 §7.1`). The only command that consumes entropy. From `CONCLUDED`, folds the
+diagram's own `CONCLUDED -> IDLE` edge ("table ready for another game," `09 §4`) into this same
+command rather than requiring a separate one — see `D-10-14`.
 
 ### `close_table`
 Close a table with no game in progress.
@@ -422,6 +425,7 @@ A rejection goes **only to the originating seat** (`05 §6.1`) and never mutates
 | D-10-11 | `reveal_hand` is separate from `declare_mahjong` and voluntary | Declaring and showing are distinct physical acts, and players may simply be trusted. |
 | D-10-12 | Rejections are private to the actor | A rejection reveals intent; other seats should not learn of a failed attempt. |
 | D-10-13 | `retract_exposure` is permitted, and its event carries the faces | Physically possible; the information was already seen, and the event records reality. |
+| D-10-14 | `start_deal` from `CONCLUDED` folds `09 §7`'s own `CONCLUDED -> IDLE` edge into one command, rather than the wire protocol exposing a separate transition | The engine's own `apply()` stays strictly `IDLE`-only — a lower-risk, unchanged contract for the pure state machine — while the table actor treats a concluded state as equivalent fresh input for a new deal, since dealing never reads the prior state at all (`08 §4`). FR-117. |
 
 ---
 
@@ -500,3 +504,4 @@ the whole thing.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial catalog: 26 commands, closed validation vocabulary, full rejection list |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `start_deal`'s `§4` row clarified to include `CONCLUDED` (`09 §7`), matching the matrix; `D-10-14` |

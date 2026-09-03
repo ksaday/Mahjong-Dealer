@@ -12,6 +12,13 @@ function readyAllAndDeal(harness: TableHarness): void {
   harness.seat("east").send("start_deal", undefined);
 }
 
+function endByAgreement(harness: TableHarness): void {
+  harness.seat("east").send("propose_end_game", undefined);
+  harness.seat("south").send("respond_end_game", { response: "accept" });
+  harness.seat("west").send("respond_end_game", { response: "accept" });
+  harness.seat("north").send("respond_end_game", { response: "accept" });
+}
+
 describe("set_ready / clear_ready (docs/10 §4: IDLE or CONCLUDED only)", () => {
   it("is refused once a game is in progress", () => {
     const harness = TableHarness.create({ seed: 1 });
@@ -452,5 +459,80 @@ describe("cmdId idempotency (docs/13 §4, ADR-0009)", () => {
 
     harness.forceClose("administrative action");
     expect(actor.acceptedCmdIds).toEqual([]);
+  });
+});
+
+describe("a second game on the same table (FR-117, docs/09 §7, D-09-10, D-10-14)", () => {
+  it("readiness clears automatically the moment the game concludes, with nobody explicitly clearing it", () => {
+    const harness = TableHarness.create({ seed: 20 });
+    readyAllAndDeal(harness);
+    const actor = harness.actorForTest();
+    for (const seat of SEAT_ORDER) {
+      expect(actor.tableSnapshot.seats[seat].ready).toBe(true);
+    }
+
+    endByAgreement(harness);
+
+    expect(actor.gameStateSnapshot.lifecycle).toBe("concluded");
+    for (const seat of SEAT_ORDER) {
+      expect(actor.tableSnapshot.seats[seat].ready).toBe(false);
+    }
+  });
+
+  it("a stale pre-conclusion ready:true does not let a second start_deal succeed without fresh set_ready (D-09-10)", () => {
+    const harness = TableHarness.create({ seed: 21 });
+    readyAllAndDeal(harness);
+    endByAgreement(harness);
+
+    // No one has re-readied since the clear — start_deal must still be refused.
+    const rejected = harness.actorForTest().submit("east", "start_deal", undefined);
+    expect(rejected).toEqual({ ok: false, code: "NOT_IN_PHASE" });
+  });
+
+  it("start_deal succeeds a second time once all four seats re-ready, dealing a genuinely new game", () => {
+    const harness = TableHarness.create({ seed: 22 });
+    readyAllAndDeal(harness);
+    const actor = harness.actorForTest();
+    const firstGameId = harness.currentGameId();
+    expect(firstGameId).not.toBeNull();
+
+    endByAgreement(harness);
+    expect(actor.gameStateSnapshot.lifecycle).toBe("concluded");
+
+    for (const seat of SEAT_ORDER) {
+      harness.seat(seat).send("set_ready", undefined);
+    }
+    const outcome = actor.submit("east", "start_deal", undefined);
+
+    expect(outcome.ok).toBe(true);
+    expect(actor.gameStateSnapshot.lifecycle).toBe("in_play");
+    expect(harness.currentGameId()).not.toBeNull();
+    expect(harness.currentGameId()).not.toBe(firstGameId);
+  });
+
+  it("re-readying one seat after conclusion doesn't disturb the other seats' already-cleared readiness", () => {
+    const harness = TableHarness.create({ seed: 23 });
+    readyAllAndDeal(harness);
+    const actor = harness.actorForTest();
+    endByAgreement(harness);
+    for (const seat of SEAT_ORDER) {
+      expect(actor.tableSnapshot.seats[seat].ready).toBe(false);
+    }
+
+    harness.seat("south").send("set_ready", undefined);
+
+    expect(actor.tableSnapshot.seats.south.ready).toBe(true);
+    for (const seat of SEAT_ORDER) {
+      if (seat === "south") continue;
+      expect(actor.tableSnapshot.seats[seat].ready).toBe(false);
+    }
+
+    // The same toggle repeated (a duplicate submit, no cmdId involved here)
+    // must not spuriously re-clear anyone either — the guard is keyed on the
+    // *previous* lifecycle, which is already "concluded" for every command
+    // sent in this whole window, not on "is a set_ready command".
+    harness.seat("west").send("set_ready", undefined);
+    expect(actor.tableSnapshot.seats.south.ready).toBe(true);
+    expect(actor.tableSnapshot.seats.west.ready).toBe(true);
   });
 });
