@@ -132,4 +132,34 @@ describe("attachMultiTableGateway — real socket routing", () => {
     });
     expect(closeCode).toBe(4004);
   });
+
+  it("heartbeats do not kill a real, responsive connection routed through the multi-table server (docs/12 §7)", async () => {
+    const table = manager.create("table-d");
+    table.actor.occupySeat("p-east-d", "East D");
+    attachMultiTableGateway({ server: httpServer, manager, heartbeatIntervalMs: 20 });
+
+    const ticket = table.tickets.issue({ accountId: "d", sessionId: "s4", tableId: "table-d", seat: "east" });
+    const client = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      client.on("open", () => {
+        client.send(
+          JSON.stringify({
+            t: "cmd",
+            cmd: "bind",
+            cmdId: "018f3a2b-1c3d-7e4f-8a12-000000000003",
+            cseq: 1,
+            d: { ticket },
+          }),
+        );
+      });
+      client.on("message", () => resolve()); // the "bound" frame
+      client.on("error", reject);
+    });
+
+    let closed = false;
+    client.on("close", () => (closed = true));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(closed).toBe(false);
+    client.close();
+  });
 });

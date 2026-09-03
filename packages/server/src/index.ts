@@ -2,14 +2,14 @@
 // actor (Phase 4), the socket gateway (Phase 5) — now routed across many
 // live tables by `gateway/multi-table-router.ts`, not just the one
 // `attachWebSocketGateway` smoke-tests, polling for session revocation
-// on a real timer (`checkSessionRevocation`, docs/12 §4.3), and
-// auto-pausing a game on disconnection (docs/22 §5) — accounts/sessions
-// (Phase 3's auth half), and the table REST surface (Phase 3's other
-// half, docs/33_API §4) are in place. Not built: the administrative
-// surface (docs/33_API §5), heartbeat scheduling (docs/12 §7) — so an
-// unclean network loss isn't detected, only a clean socket close — and
-// the live table registry's crash-recovery reconstruction from a
-// checkpoint (see tables/manager.ts's module comment). See
+// on a real timer (`checkSessionRevocation`, docs/12 §4.3), detecting a
+// dead connection with real WebSocket heartbeats (`startHeartbeat`,
+// docs/12 §7), and auto-pausing a game on disconnection (docs/22 §5) —
+// accounts/sessions (Phase 3's auth half), and the table REST surface
+// (Phase 3's other half, docs/33_API §4) are in place. Not built: the
+// administrative surface (docs/33_API §5) and the live table registry's
+// crash-recovery reconstruction from a checkpoint (see
+// tables/manager.ts's module comment). See
 // table/actor.ts, gateway/gateway.ts, auth/service.ts, and
 // tables/service.ts's module comments for scope detail.
 

@@ -10,15 +10,15 @@
 // isSessionActive` once auth was built), and auto-pause on disconnection
 // (`autoPauseOnAbsence`/`autoResumeOnReturn`, docs/22 §5 — see their own
 // doc comments for the two gaps that remain even so: single-holder
-// `PauseState` and the wire `reason` field). Deliberately not built:
-// heartbeat scheduling (docs/12 §7) — a real timer loop this slice
-// doesn't add, and without it, only a *clean* socket close reaches
-// `onClose` at all; an unclean network loss goes undetected until that
-// timer exists. Revocation polling and the bind deadline are exposed as
-// callable checks a real timer would drive (`checkBindDeadline`,
-// `checkSessionRevocation`), not implemented as internal `setInterval`s,
-// so the logic stays testable with an injected clock/stub rather than
-// real elapsed time.
+// `PauseState` and the wire `reason` field). Heartbeats (docs/12 §7) are
+// a real WebSocket protocol ping/pong loop, entirely in `ws-server.ts`'s
+// `startHeartbeat` — invisible to this transport-agnostic module, which
+// only ever learns of a heartbeat-detected loss the same way it learns of
+// any other disconnection: the resulting `close` event. Revocation
+// polling and the bind deadline are exposed as callable checks a real
+// timer would drive (`checkBindDeadline`, `checkSessionRevocation`), not
+// implemented as internal `setInterval`s, so the logic stays testable
+// with an injected clock/stub rather than real elapsed time.
 import {
   COMMAND_SCHEMAS,
   SEAT_ORDER,

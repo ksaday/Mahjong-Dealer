@@ -189,6 +189,15 @@ paused; and the wire event's `reason` field reads `"requested"` rather than docs
 `"seat_absent"`, because dealer-core's `request_pause` carries no reason to distinguish the two.
 Neither is fixed here — both need a small dealer-core model change outside this slice.
 
-Still not built: heartbeats (docs/12 §7) — so only a *clean* socket close reaches `onClose` at all;
-an unclean network loss goes undetected without them — and the admin REST endpoints. 284 tests
-passing overall. Still nothing in `web`.
+Heartbeats (docs/12 §7) are now built too, closing the last flagged gap in Phase 5's gateway: a real
+WebSocket protocol ping/pong loop, `ws-server.ts`'s new `startHeartbeat`, entirely at the transport
+layer and invisible to `gateway.ts`. A 15-second server ping unanswered for two consecutive intervals
+terminates the connection with `ws.terminate()` rather than a graceful `.close()` — a connection this
+unresponsive can't be trusted to complete a closing handshake — which fires the same `close` event
+any other disconnection does, so the existing `onClose` → `autoPauseOnAbsence` path handles it with no
+heartbeat-specific code of its own. `startHeartbeat` is typed against a narrow `HeartbeatSocket`
+interface rather than the concrete `ws.WebSocket` class, so its miss-counting logic is unit-tested
+with a plain fake object instead of a real socket, alongside a real-socket smoke test proving a normal
+connection survives several intervals untouched.
+
+Still not built: the admin REST endpoints. 289 tests passing overall. Still nothing in `web`.

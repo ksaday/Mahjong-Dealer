@@ -31,14 +31,20 @@
 // table-count scale a single process owns, and it means a table created
 // after this function runs is covered on the very next tick without
 // this module needing to know about it.
+//
+// Heartbeats (docs/12 §7) reuse `ws-server.ts`'s `startHeartbeat` as-is,
+// one per connection exactly as the single-table server runs it — a dead
+// connection is a transport fact independent of which table it will turn
+// out to belong to, so there's nothing multi-table-specific about it.
 import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { TableManager } from "../tables/manager.js";
 import { isRecord, parseJson, type ConnectionHandle } from "./gateway.js";
-import { wsToSocketLike } from "./ws-server.js";
+import { startHeartbeat, wsToSocketLike } from "./ws-server.js";
 
 const BIND_DEADLINE_GRACE_MS = 5_200; // docs/12 §4.2's 5s deadline, plus scheduling slack
 const SESSION_REVOCATION_POLL_MS = 2_000; // see ws-server.ts's own constant of the same name
+const HEARTBEAT_INTERVAL_MS = 15_000; // see ws-server.ts's own constant of the same name
 
 export interface AttachMultiTableGatewayOptions {
   readonly server: HttpServer;
@@ -48,6 +54,8 @@ export interface AttachMultiTableGatewayOptions {
   readonly allowedOrigins?: readonly string[];
   /** Overrides `SESSION_REVOCATION_POLL_MS` — for tests that don't want to wait 2 real seconds. */
   readonly sessionRevocationPollMs?: number;
+  /** Overrides `HEARTBEAT_INTERVAL_MS` — for tests that don't want to wait 15-30 real seconds. */
+  readonly heartbeatIntervalMs?: number;
 }
 
 /** Attaches every live table's gateway to one WebSocket upgrade path, routed per connection by the bind frame's ticket. */
@@ -79,6 +87,7 @@ export function attachMultiTableGateway(options: AttachMultiTableGatewayOptions)
     const preResolveTimer = setTimeout(() => {
       if (handle === null) ws.close(4001, "BIND_REQUIRED");
     }, BIND_DEADLINE_GRACE_MS);
+    const stopHeartbeat = startHeartbeat(ws, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
 
     ws.on("message", (data) => {
       const raw = data.toString();
@@ -104,6 +113,7 @@ export function attachMultiTableGateway(options: AttachMultiTableGatewayOptions)
     ws.on("close", () => {
       clearTimeout(preResolveTimer);
       clearTimeout(postResolveTimer);
+      stopHeartbeat();
       handle?.onClose();
     });
   });

@@ -623,10 +623,31 @@ in the test:
   which is its own small design question (command-supplied, or actor-overridden after the fact?) left
   to a future slice.
 
-Still not built: heartbeat scheduling (docs/12 §7) — without it, only a *clean* socket close reaches
-`onClose`; an unclean network loss goes undetected — and the admin REST endpoints.
+**Heartbeat scheduling (docs/12 §7) is now built, closing the last flagged gap in Phase 5's
+gateway.** It lives entirely in `ws-server.ts` (and, reused, `multi-table-router.ts`) as a real
+WebSocket protocol ping/pong loop — `startHeartbeat` — deliberately outside `gateway.ts`'s
+transport-agnostic logic: a dead connection is a transport fact, and `gateway.ts` learns of one the
+same way it learns of any other disconnection, via the resulting `close` event, with no
+heartbeat-specific code of its own. A 15-second server ping (docs/12 §7's own interval) unanswered
+for two consecutive intervals (`docs/22 §4`'s "misses before absent: 2") calls `ws.terminate()` rather
+than a graceful `.close()`, since a connection this unresponsive cannot be trusted to complete a
+closing handshake.
 
-284 tests passing overall. No client code exists yet.
+`startHeartbeat` is typed against a narrow `HeartbeatSocket` interface — `on`/`ping`/`terminate` —
+rather than the concrete `ws.WebSocket` class. The real class satisfies it structurally, so neither
+call site changed, but it means the miss-counting logic (one miss doesn't terminate; two consecutive
+misses do; a pong resets the count; `stop()` actually stops the timer) is unit-tested against a plain
+fake object rather than fighting a real socket's own automatic pong-answering behavior — which is also
+exactly why the *failure* path isn't additionally exercised end-to-end over a real socket in this
+slice: a real `ws` client answers protocol pings automatically, and there is no supported way to
+simulate an unresponsive one without contriving something that would actually just look like a normal
+close. The real-socket tests instead confirm the *positive* case — a healthy connection survives
+several heartbeat intervals untouched — which is what proves the wiring, as opposed to the counting
+logic the unit tests already cover.
+
+Still not built: the admin REST endpoints.
+
+289 tests passing overall. No client code exists yet.
 
 ---
 

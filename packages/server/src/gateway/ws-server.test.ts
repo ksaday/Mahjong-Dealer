@@ -11,7 +11,7 @@ import { createDeterministicEntropy } from "../testing/deterministic-entropy.js"
 import { TableActor } from "../table/actor.js";
 import { TableGateway } from "./gateway.js";
 import { TicketStore } from "./tickets.js";
-import { attachWebSocketGateway } from "./ws-server.js";
+import { attachWebSocketGateway, startHeartbeat, type HeartbeatSocket } from "./ws-server.js";
 
 let httpServer: ReturnType<typeof createServer>;
 let url: string;
@@ -104,5 +104,109 @@ describe("session-revocation polling (docs/12 §4.3)", () => {
       client.on("close", (code) => resolve(code));
     });
     expect(closeCode).toBe(4004);
+  });
+});
+
+describe("heartbeats (docs/12 §7)", () => {
+  it("a real, responsive connection survives several heartbeat intervals", async () => {
+    const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
+    for (const seat of SEAT_ORDER) actor.occupySeat(`p-${seat}`, seat);
+    const tickets = new TicketStore();
+    const gateway = new TableGateway({ actor, tickets });
+    attachWebSocketGateway({ server: httpServer, gateway, heartbeatIntervalMs: 20 });
+
+    const ticket = tickets.issue({ accountId: "a", sessionId: "s", tableId: "t1", seat: "east" });
+    const client = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      client.on("open", () => {
+        client.send(
+          JSON.stringify({
+            t: "cmd",
+            cmd: "bind",
+            cmdId: "018f3a2b-1c3d-7e4f-8a12-000000000002",
+            cseq: 1,
+            d: { ticket },
+          }),
+        );
+      });
+      client.on("message", () => resolve()); // the "bound" frame
+      client.on("error", reject);
+    });
+
+    let closed = false;
+    client.on("close", () => (closed = true));
+    // `ws` clients answer protocol-level pings automatically; several
+    // intervals' worth of real elapsed time should never trip termination.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(closed).toBe(false);
+    client.close();
+  });
+});
+
+describe("startHeartbeat (unit — docs/12 §7)", () => {
+  function fakeSocket() {
+    const pings: number[] = [];
+    let terminated = false;
+    let pongListener: (() => void) | null = null;
+    const socket: HeartbeatSocket = {
+      on(event, listener) {
+        if (event === "pong") pongListener = listener;
+        return socket;
+      },
+      ping() {
+        pings.push(pings.length);
+      },
+      terminate() {
+        terminated = true;
+      },
+    };
+    return {
+      socket,
+      pingCount: () => pings.length,
+      isTerminated: () => terminated,
+      sendPong: () => pongListener?.(),
+    };
+  }
+
+  it("terminates after two consecutive missed pongs, not after one", async () => {
+    const { socket, isTerminated } = fakeSocket();
+    const stop = startHeartbeat(socket, 10);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 15)); // 1st ping sent, no pong
+      expect(isTerminated()).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // 2nd tick: 1 miss recorded, 2nd ping sent
+      expect(isTerminated()).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // 3rd tick: 2nd miss recorded -> terminate
+      expect(isTerminated()).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
+  it("a pong resets the miss count, so an intermittently-responsive connection is never terminated", async () => {
+    const { socket, isTerminated, sendPong } = fakeSocket();
+    const stop = startHeartbeat(socket, 10);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      sendPong(); // answers before the next tick counts a miss
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(isTerminated()).toBe(false);
+      sendPong();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(isTerminated()).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  it("stop() clears the timer so no further pings or terminations occur", async () => {
+    const { socket, pingCount, isTerminated } = fakeSocket();
+    const stop = startHeartbeat(socket, 10);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    stop();
+    const countAtStop = pingCount();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(pingCount()).toBe(countAtStop);
+    expect(isTerminated()).toBe(false);
   });
 });
