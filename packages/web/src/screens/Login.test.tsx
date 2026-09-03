@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../auth/AuthContext.js";
 import { ToastProvider } from "../components/Toast.js";
@@ -18,6 +18,22 @@ function renderLogin() {
       <AuthProvider>
         <ToastProvider>
           <Login />
+        </ToastProvider>
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+function renderLoginWithDestinations() {
+  return render(
+    <MemoryRouter initialEntries={["/login"]}>
+      <AuthProvider>
+        <ToastProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/home" element={<div>Home screen</div>} />
+            <Route path="/admin" element={<div>Administration screen</div>} />
+          </Routes>
         </ToastProvider>
       </AuthProvider>
     </MemoryRouter>,
@@ -70,5 +86,25 @@ describe("Login (S-03, docs/32_UX/Screen_Inventory.md §3)", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/temporarily locked/);
     expect(screen.getByRole("button", { name: "Log in" })).toBeDisabled();
+  });
+
+  it("sends a player to home and an administrator to S-09 (Screen_Inventory §2)", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+      if (input === "/api/v1/accounts/me") return Promise.resolve(jsonResponse(401, { error: { code: "NOT_AUTHENTICATED", message: "No valid session." } }));
+      if (input === "/api/v1/sessions" && init?.method === "POST") {
+        return Promise.resolve(jsonResponse(200, { account_id: "admin-1", display_name: "Root", role: "administrator" }));
+      }
+      throw new Error(`unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderLoginWithDestinations();
+    await waitFor(() => expect(screen.getByLabelText("Email")).toBeEnabled());
+    await user.type(screen.getByLabelText("Email"), "root@example.com");
+    await user.type(screen.getByLabelText("Password"), "whatever whatever");
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+
+    expect(await screen.findByText("Administration screen")).toBeInTheDocument();
   });
 });

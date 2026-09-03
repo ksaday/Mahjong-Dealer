@@ -86,6 +86,15 @@ export function Home() {
         <button type="button" className="button-link" onClick={() => navigate("/help")}>
           Help
         </button>
+        {state.account.role === "administrator" && (
+          <>
+            {" "}
+            ·{" "}
+            <button type="button" className="button-link" onClick={() => navigate("/admin")}>
+              Administration
+            </button>
+          </>
+        )}
       </p>
 
       <section aria-labelledby="create-heading">

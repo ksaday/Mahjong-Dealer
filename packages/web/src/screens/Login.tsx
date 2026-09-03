@@ -8,6 +8,8 @@ import { useToast } from "../components/Toast.js";
 // S-03 Log in (docs/32_UX/Screen_Inventory.md §3). The failure state never
 // distinguishes a wrong password from an unknown account (FR-002); the
 // locked state states its own expiry (D-32-04) rather than just "locked."
+// An administrator goes straight to S-09, not S-04 (Screen_Inventory §2's
+// flow diagram: "S-03 -->|administrator| S-09").
 export function Login() {
   const { state, login } = useAuth();
   const { show } = useToast();
@@ -20,7 +22,7 @@ export function Login() {
   const [lockedUntilIso, setLockedUntilIso] = useState<string | null>(null);
 
   if (state.status === "authenticated") {
-    return <Navigate to="/home" replace />;
+    return <Navigate to={state.account.role === "administrator" ? "/admin" : "/home"} replace />;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -29,8 +31,8 @@ export function Login() {
     setLockedUntilIso(null);
     setSubmitting(true);
     try {
-      await login(email, password);
-      navigate("/home");
+      const result = await login(email, password);
+      navigate(result.role === "administrator" ? "/admin" : "/home");
     } catch (error) {
       setSubmitting(false);
       if (isLockedError(error)) {
