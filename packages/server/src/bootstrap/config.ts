@@ -12,8 +12,12 @@
 // gets the identical treatment here since nothing else validates it.
 import { getPasswordPepper } from "../auth/pepper.js";
 import { getTotpEncryptionKey } from "../auth/totp-key.js";
+import { getCheckpointEncryptionKey } from "../checkpoint/checkpoint-key.js";
 
 const DEV_DEFAULT_DATABASE_URL = "postgres://mahjong_dealer_dev:insecure-dev-password@localhost:5432/mahjong_dealer_dev";
+/** `app_checkpoint_reader` (migration `0006`) — the narrow, SELECT-on-`private_state`-only role docs/17 §7.2's "dedicated decryption path" requires (D-17-18). Distinct from `DATABASE_URL`'s `app` role, which has no SELECT on that column at all. */
+const DEV_DEFAULT_CHECKPOINT_READ_DATABASE_URL =
+  "postgres://mahjong_dealer_checkpoint_reader:insecure-dev-password@localhost:5432/mahjong_dealer_dev";
 const DEFAULT_PORT = 3000; // matches packages/web/vite.config.ts's dev proxy target placeholder
 const DEFAULT_HOST = "0.0.0.0";
 
@@ -22,10 +26,12 @@ export interface ServerConfig {
   readonly port: number;
   readonly host: string;
   readonly databaseUrl: string;
+  readonly checkpointReadDatabaseUrl: string;
   readonly allowedOrigins: readonly string[];
   /** Not consumed here — validated eagerly so a bad value throws at startup, then read again where it's actually used. */
   readonly passwordPepper: string;
   readonly totpEncryptionKey: Buffer;
+  readonly checkpointEncryptionKey: Buffer;
 }
 
 function getDatabaseUrl(env: NodeJS.ProcessEnv): string {
@@ -37,6 +43,19 @@ function getDatabaseUrl(env: NodeJS.ProcessEnv): string {
     return url;
   }
   return url ?? DEV_DEFAULT_DATABASE_URL;
+}
+
+function getCheckpointReadDatabaseUrl(env: NodeJS.ProcessEnv): string {
+  const url = env["CHECKPOINT_READ_DATABASE_URL"];
+  if (env["NODE_ENV"] === "production") {
+    if (url === undefined || url.length === 0 || url === DEV_DEFAULT_CHECKPOINT_READ_DATABASE_URL) {
+      throw new Error(
+        "CHECKPOINT_READ_DATABASE_URL is missing or is the development default; refusing to start in production (NFR-044)",
+      );
+    }
+    return url;
+  }
+  return url ?? DEV_DEFAULT_CHECKPOINT_READ_DATABASE_URL;
 }
 
 function getAllowedOrigins(env: NodeJS.ProcessEnv): readonly string[] {
@@ -62,8 +81,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     port: getPort(env),
     host: env["HOST"] ?? DEFAULT_HOST,
     databaseUrl: getDatabaseUrl(env),
+    checkpointReadDatabaseUrl: getCheckpointReadDatabaseUrl(env),
     allowedOrigins: getAllowedOrigins(env),
     passwordPepper: getPasswordPepper(env),
     totpEncryptionKey: getTotpEncryptionKey(env),
+    checkpointEncryptionKey: getCheckpointEncryptionKey(env),
   };
 }

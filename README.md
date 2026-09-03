@@ -158,10 +158,9 @@ after the actor itself accepts a seating change, never independently of it. Join
 like a session token; a full table on `POST /tables/join` gets the same uniform `404` as a wrong
 code, per `docs/18 §4.2`, not a distinguishable rejection. The CSRF/session check `auth/http.ts` used
 privately is now `auth/session-guard.ts`, shared by both route modules rather than duplicated. Not
-built: reconstructing a table's live actor from its checkpoint after a restart (the in-memory
-registry only knows about tables created during its own process's lifetime), the admin REST
-endpoints, and, again, a live-database exercise of the Postgres
-repository.
+built at this point: the admin REST endpoints, and, again, a live-database exercise of the Postgres
+repository. (Reconstructing a table's live actor from its checkpoint after a restart was closed much
+later — see `checkpoint/`, `docs/29`.)
 
 A real deployment has many live tables, but `attachWebSocketGateway` only ever served one
 `TableGateway`. `gateway/multi-table-router.ts` fixes that: it peeks the `tableId` a connect ticket

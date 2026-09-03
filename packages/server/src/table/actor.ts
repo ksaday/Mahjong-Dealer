@@ -28,6 +28,7 @@
 // (docs/13) this actor doesn't yet see. The `event` frame delivered to
 // the acting seat (every accepted command still broadcasts to all four
 // seats, itself included) stands in for confirmation in this slice.
+import { randomUUID } from "node:crypto";
 import {
   apply,
   checkpoint as coreCheckpoint,
@@ -77,6 +78,8 @@ export interface ActorSnapshot {
   readonly table: Table;
   readonly seq: number;
   readonly gameStateBytes: string;
+  /** The current game's durable row id (`games.id`), or `null` when idle/concluded — see `TableActor.currentGameId`. */
+  readonly gameId: string | null;
 }
 
 /**
@@ -117,6 +120,8 @@ export class TableActor {
   private table: Table;
   private gameState: GameState;
   private seq = 0;
+  /** The current game's durable row id (`games.id`, docs/17 §5.6) — minted fresh at each `start_deal`, cleared on force-close or once purged after conclusion (docs/16 §5.5). `null` means "nothing to checkpoint." */
+  private gameId: string | null = null;
   private readonly checkpoints: CheckpointHistory;
   private readonly frameLog: Record<Seat, ActorFrame[]>;
 
@@ -140,6 +145,15 @@ export class TableActor {
 
   get seqNumber(): number {
     return this.seq;
+  }
+
+  get currentGameId(): string | null {
+    return this.gameId;
+  }
+
+  /** Called once a caller has durably purged this game's checkpoint (`CheckpointWriter.purge`) after a natural conclusion — guards against re-purging on a later submit against the same concluded game. */
+  clearCurrentGameId(): void {
+    this.gameId = null;
   }
 
   framesFor(seat: Seat): readonly ActorFrame[] {
@@ -179,6 +193,7 @@ export class TableActor {
     this.table = closeTable(this.table);
     this.gameState = createIdleState();
     this.checkpoints.clear();
+    this.gameId = null;
     this.seq += 1;
     const event: TableEvent = { type: "TableClosed", reason };
     for (const viewer of SEAT_ORDER) {
@@ -203,7 +218,7 @@ export class TableActor {
    * needing its own persistence path.
    */
   snapshot(): ActorSnapshot {
-    return { table: this.table, seq: this.seq, gameStateBytes: this.checkpointBytes() };
+    return { table: this.table, seq: this.seq, gameStateBytes: this.checkpointBytes(), gameId: this.gameId };
   }
 
   static fromSnapshot(options: TableActorOptions, snapshot: ActorSnapshot): TableActor {
@@ -211,6 +226,32 @@ export class TableActor {
     actor.table = snapshot.table;
     actor.seq = snapshot.seq;
     actor.gameState = coreRestore(snapshot.gameStateBytes);
+    actor.gameId = snapshot.gameId;
+    return actor;
+  }
+
+  /**
+   * Process-restart recovery (docs/29_Disaster_Recovery.md,
+   * `TableManager.restoreLiveTables`): composes a fresh `table` — built by
+   * the caller from `TableRepository`'s durable seat rows, since seat
+   * occupancy can have changed since the last checkpoint was written — with
+   * the game-state portion of a checkpoint, if one exists. Deliberately
+   * distinct from `fromSnapshot`, which trusts `snapshot.table` wholesale;
+   * that shape only suits a caller that knows its snapshot's `table` is
+   * still current (there is no such caller yet).
+   */
+  static fromRestoredParts(
+    options: TableActorOptions,
+    table: Table,
+    game: { readonly seq: number; readonly gameStateBytes: string; readonly gameId: string | null } | null,
+  ): TableActor {
+    const actor = new TableActor(options);
+    actor.table = table;
+    if (game !== null) {
+      actor.seq = game.seq;
+      actor.gameState = coreRestore(game.gameStateBytes);
+      actor.gameId = game.gameId;
+    }
     return actor;
   }
 
@@ -372,6 +413,7 @@ export class TableActor {
     }
     const result = apply(this.gameState, { type: "start_deal", seat }, this.options.entropy);
     if (!result.ok) return result;
+    this.gameId = randomUUID(); // a fresh durable row per deal (docs/17 §5.6) — the checkpoint's game_id
     return {
       ok: true,
       state: result.state,

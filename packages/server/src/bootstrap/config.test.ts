@@ -9,14 +9,18 @@ import { loadConfig } from "./config.js";
 
 const VALID_PEPPER = "a-real-production-pepper-value";
 const VALID_TOTP_KEY = "1".repeat(64);
+const VALID_CHECKPOINT_KEY = "2".repeat(64);
 const VALID_DATABASE_URL = "postgres://real-user:real-pass@db.internal:5432/mahjong_dealer";
+const VALID_CHECKPOINT_READ_DATABASE_URL = "postgres://checkpoint-reader:real-pass@db.internal:5432/mahjong_dealer";
 
 function validEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): NodeJS.ProcessEnv {
   return {
     NODE_ENV: "production",
     PASSWORD_PEPPER: VALID_PEPPER,
     TOTP_ENCRYPTION_KEY: VALID_TOTP_KEY,
+    CHECKPOINT_ENCRYPTION_KEY: VALID_CHECKPOINT_KEY,
     DATABASE_URL: VALID_DATABASE_URL,
+    CHECKPOINT_READ_DATABASE_URL: VALID_CHECKPOINT_READ_DATABASE_URL,
     ...overrides,
   };
 }
@@ -26,7 +30,9 @@ describe("loadConfig in production", () => {
     const config = loadConfig(validEnv());
     expect(config.passwordPepper).toBe(VALID_PEPPER);
     expect(config.totpEncryptionKey.toString("hex")).toBe(VALID_TOTP_KEY);
+    expect(config.checkpointEncryptionKey.toString("hex")).toBe(VALID_CHECKPOINT_KEY);
     expect(config.databaseUrl).toBe(VALID_DATABASE_URL);
+    expect(config.checkpointReadDatabaseUrl).toBe(VALID_CHECKPOINT_READ_DATABASE_URL);
   });
 
   it("refuses to start when PASSWORD_PEPPER is absent", () => {
@@ -56,6 +62,29 @@ describe("loadConfig in production", () => {
       loadConfig(validEnv({ DATABASE_URL: "postgres://mahjong_dealer_dev:insecure-dev-password@localhost:5432/mahjong_dealer_dev" })),
     ).toThrow(/DATABASE_URL/);
   });
+
+  it("refuses to start when CHECKPOINT_ENCRYPTION_KEY is absent", () => {
+    expect(() => loadConfig(validEnv({ CHECKPOINT_ENCRYPTION_KEY: undefined }))).toThrow(/CHECKPOINT_ENCRYPTION_KEY/);
+  });
+
+  it("refuses to start when CHECKPOINT_ENCRYPTION_KEY is the development default", () => {
+    expect(() => loadConfig(validEnv({ CHECKPOINT_ENCRYPTION_KEY: "0".repeat(64) }))).toThrow(/CHECKPOINT_ENCRYPTION_KEY/);
+  });
+
+  it("refuses to start when CHECKPOINT_READ_DATABASE_URL is absent", () => {
+    expect(() => loadConfig(validEnv({ CHECKPOINT_READ_DATABASE_URL: undefined }))).toThrow(/CHECKPOINT_READ_DATABASE_URL/);
+  });
+
+  it("refuses to start when CHECKPOINT_READ_DATABASE_URL is the development default", () => {
+    expect(() =>
+      loadConfig(
+        validEnv({
+          CHECKPOINT_READ_DATABASE_URL:
+            "postgres://mahjong_dealer_checkpoint_reader:insecure-dev-password@localhost:5432/mahjong_dealer_dev",
+        }),
+      ),
+    ).toThrow(/CHECKPOINT_READ_DATABASE_URL/);
+  });
 });
 
 describe("loadConfig outside production", () => {
@@ -63,7 +92,9 @@ describe("loadConfig outside production", () => {
     const config = loadConfig({ NODE_ENV: "development" });
     expect(config.passwordPepper.length).toBeGreaterThan(0);
     expect(config.totpEncryptionKey).toHaveLength(32);
+    expect(config.checkpointEncryptionKey).toHaveLength(32);
     expect(config.databaseUrl).toContain("mahjong_dealer_dev");
+    expect(config.checkpointReadDatabaseUrl).toContain("mahjong_dealer_checkpoint_reader");
   });
 
   it("honors an explicit real value even outside production", () => {

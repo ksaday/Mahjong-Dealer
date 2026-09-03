@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 17_Database_Design.md |
-| **Status** | Ratified v0.4 — approved by the project owner, 2026-09-03 |
+| **Status** | Ratified v0.5 — approved by the project owner, 2026-09-03 |
 | **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the physical schema: tables, columns, constraints, indexes, encryption, and privileges. Does **not** own what data exists or why (`16`), the privacy classification (`14`), or migration operations (`27`). |
 
@@ -352,13 +352,15 @@ the checkpoint key (`15 §9`), so rotating one never touches rows encrypted unde
 | Role | Grants |
 |---|---|
 | `app` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all tables **except no `SELECT` on either `private_state` column** — obtained through a dedicated decryption path — **and `idempotency_keys`, `SELECT`/`INSERT` only**: a row is never updated and is never explicitly deleted, only aged out (`§5.12`) |
+| `app_checkpoint_reader` | The dedicated decryption path referenced above (migration `0006`, `D-17-18`): `SELECT (game_id, private_state, key_version)` on `checkpoints` only. No grant on any other table, no write grant anywhere, and — since `correction_checkpoints` durability remains a deferred follow-on, not built in the same pass as crash-recovery restore — no grant on `correction_checkpoints` either. A distinct connection string/credential from `app`'s, so the two roles' access can never be exercised through one compromised connection. |
 | `app_readonly` | `SELECT` on public tables only; **no grant on `private_state`, `password_hash`, `token_hash`, `csrf_secret`, `totp_secret`, `totp_secret_key_version`, `totp_last_used_step`** |
 | `migrator` | DDL; used only by migrations |
 
 The column-level denial on `private_state` for the general application role is the second barrier
 behind encryption. A query written by mistake, or by an injection that reached the general role,
 cannot return the column at all. Reading it requires the narrow, audited path that also holds the
-key.
+key — `app_checkpoint_reader`, exercised by exactly one code path
+(`CheckpointRepository.readForRestore`, `server`), never the general application role.
 
 `app_readonly` exists for operational inspection during an incident and can reach nothing sensitive.
 
@@ -413,6 +415,7 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | D-17-15 | `totp_secret` is encrypted but not column-denied from the general `app` role | Unlike `private_state`, read once at actor start through a narrow path, the TOTP secret is decrypted on every `POST /sessions/mfa` call — the normal application flow. `ADR-0017`. |
 | D-17-16 | MFA lockout (`mfa_failed_attempts`/`mfa_locked_until`) reuses the login lockout curve, as its own separate counter | A wrong TOTP code is a different failure than a wrong password; sharing `failed_logins` would let one lock out the other. `ADR-0017`. |
 | D-17-17 | `mfa_verified_at` lives on `sessions`, not `accounts` | Step-up verifies *this session*, not the account generally — a new login is a new session and starts unverified again, the same way `revoked_at` doesn't carry across sessions. `D-15-11`, `ADR-0017`. |
+| D-17-18 | `private_state` restore goes through a second DB role (`app_checkpoint_reader`), not a grant widening `app` | `§7.2`'s existing denial on `app` was written before any legitimate consumer of `private_state` existed; crash-recovery restore (`docs/29`) is now that consumer. A second, SELECT-only, single-column, single-table role keeps the original defense-in-depth property literally true (`app`'s own credentials still can't read the column at all) rather than trading it for one fewer connection to manage. |
 
 ---
 
@@ -502,3 +505,4 @@ analysis.
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `idempotency_keys` (`§5.12`) for `D-18-10`; twelve tables; `D-17-13` |
 | 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `accounts.password_change_count`/`password_change_window_started_at` (`§5.1`) for the durable `POST /accounts/me/password` limit; `D-17-14` |
 | 0.4 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: `accounts.totp_secret`/`totp_secret_key_version`/`totp_enrolled_at`/`totp_last_used_step`/`mfa_failed_attempts`/`mfa_locked_until` and `sessions.mfa_verified_at` (`§5.1`, `§5.2`); `D-17-15`–`D-17-17` |
+| 0.5 | 2026-09-03 | Design (architect role), owner-approved | Checkpoint durability (`docs/29`): `app_checkpoint_reader` role (`§7.2`, migration `0006`) as `private_state`'s dedicated decryption path; `D-17-18` |

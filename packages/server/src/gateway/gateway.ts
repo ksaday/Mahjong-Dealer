@@ -31,6 +31,7 @@ import {
   type Seat,
 } from "@mahjong-dealer/shared";
 import type { ActorFrame, TableActor } from "../table/actor.js";
+import type { CheckpointWriter } from "../checkpoint/writer.js";
 import { Connection } from "./connection.js";
 import type { SocketLike } from "./socket.js";
 import type { TicketStore } from "./tickets.js";
@@ -82,6 +83,7 @@ export class TableGateway {
   private readonly receipts = new Map<string, { readonly seat: Seat; readonly frame: ServerFrame }>();
 
   private readonly isSessionActive: ((sessionId: string) => Promise<boolean>) | undefined;
+  private readonly checkpointWriter: CheckpointWriter | undefined;
 
   constructor(options: {
     readonly actor: TableActor;
@@ -89,11 +91,14 @@ export class TableGateway {
     readonly now?: () => number;
     /** docs/12 §4.3: consulted by `checkSessionRevocation`. Omit to leave revocation polling disabled — e.g. `TableHarness`-driven tests with no session layer at all. */
     readonly isSessionActive?: (sessionId: string) => Promise<boolean>;
+    /** docs/16 §5.3/docs/29: omit to leave checkpoint durability disabled — e.g. `TableHarness`-driven tests with no database at all. */
+    readonly checkpointWriter?: CheckpointWriter;
   }) {
     this.actor = options.actor;
     this.tickets = options.tickets;
     this.now = options.now ?? Date.now;
     this.isSessionActive = options.isSessionActive;
+    this.checkpointWriter = options.checkpointWriter;
   }
 
   /** For assertions and deliberate fault injection only (docs/26 §3.1's `harness.state()` reasoning applies here too). */
@@ -121,8 +126,16 @@ export class TableGateway {
    * path for no benefit.
    */
   forceClose(reason: string): void {
+    // Capture before forceClose (which nulls it) — a forced close purges
+    // durably too (docs/16 §5.5's "or when a table closes or is
+    // abandoned"), same as a natural conclusion, just without an outcome
+    // to record (`NR-013`: not a conclusion the players reached).
+    const gameId = this.actor.currentGameId;
     this.actor.forceClose(reason);
     this.deliverNewFrames();
+    if (gameId !== null && this.checkpointWriter !== undefined) {
+      void this.checkpointWriter.purge(gameId).catch(this.onCheckpointError);
+    }
   }
 
   /**
@@ -133,12 +146,12 @@ export class TableGateway {
    * own reconnect-with-jitter logic (docs/21 §7) takes over. `main.ts`
    * calls this, via `TableManager.shutdownAll`, on `SIGTERM`.
    *
-   * Deliberately does **not** flush a checkpoint first — docs/21 §7 also
-   * specifies "flush every checkpoint synchronously" as part of this same
-   * step, but no checkpoint-persistence subsystem exists yet anywhere in
-   * this codebase (the `checkpoints` table has no repository or write
-   * path — a real, separate gap, not decided here). A planned restart
-   * today loses whatever a process restart already loses.
+   * Does **not** itself flush a checkpoint — docs/21 §7's "flush every
+   * checkpoint synchronously" is orchestrated one level up, by
+   * `TableManager.flushAllCheckpointsSync` (`main.ts`'s shutdown handler
+   * awaits it between `shutdownAll` and closing the database pool), so
+   * every live table's actor gets one synchronous flush regardless of
+   * which gateway method is called on it.
    */
   notifyShuttingDown(): void {
     const notice: ServerFrame = { t: "notice", kind: "service_restarting", d: {} };
@@ -284,14 +297,22 @@ export class TableGateway {
    * types are untouched).
    */
   private autoPauseOnAbsence(seat: Seat): void {
+    const beforeGameId = this.actor.currentGameId;
     const outcome = this.actor.submit(seat, "request_pause", undefined, "seat_absent");
-    if (outcome.ok) this.deliverNewFrames();
+    if (outcome.ok) {
+      this.deliverNewFrames();
+      this.syncCheckpoint(beforeGameId);
+    }
   }
 
   /** The other half of `autoPauseOnAbsence`: a seat rebinding auto-clears the pause it caused, if any — `applyRequestResume` rejects for anyone else's pause or when nothing is paused, so this is likewise safe to call unconditionally. */
   private autoResumeOnReturn(seat: Seat): void {
+    const beforeGameId = this.actor.currentGameId;
     const outcome = this.actor.submit(seat, "request_resume", undefined);
-    if (outcome.ok) this.deliverNewFrames();
+    if (outcome.ok) {
+      this.deliverNewFrames();
+      this.syncCheckpoint(beforeGameId);
+    }
   }
 
   // `cseq` and the rate limit apply to *every* frame a bound connection
@@ -416,6 +437,7 @@ export class TableGateway {
       return;
     }
 
+    const beforeGameId = this.actor.currentGameId;
     const outcome = this.actor.submit(connection.seat, commandName, parsed.data as never);
 
     if (!outcome.ok) {
@@ -427,7 +449,45 @@ export class TableGateway {
     connection.send(JSON.stringify(ackFrame));
     this.receipts.set(cmdId, { seat: connection.seat, frame: ackFrame });
     this.deliverNewFrames();
+    this.syncCheckpoint(beforeGameId);
   }
+
+  /**
+   * Durable checkpoint sync after any accepted command (docs/16 §5.3: "after
+   * every accepted command that changes public state"), off the
+   * acknowledgement path (NFR-032) — every call here is fire-and-forget.
+   * A concluded game is purged rather than checkpointed (nothing left worth
+   * restoring, and writing then immediately deleting would race). A brand
+   * new game (`currentGameId` just changed) must have its durable `games`
+   * row exist before the checkpoint referencing it — via `game_id`'s FK —
+   * is written, so that one path awaits `startGame` first.
+   */
+  private syncCheckpoint(beforeGameId: string | null): void {
+    const writer = this.checkpointWriter;
+    if (writer === undefined) return;
+
+    const state = this.actor.gameStateSnapshot;
+    if (state.lifecycle === "concluded") {
+      void writer.concludeAndPurge(this.actor).catch(this.onCheckpointError);
+      return;
+    }
+
+    const afterGameId = this.actor.currentGameId;
+    if (afterGameId === null) return; // idle: nothing to checkpoint
+
+    if (afterGameId !== beforeGameId) {
+      void writer
+        .startGame(afterGameId, this.actor.tableSnapshot.id)
+        .then(() => writer.flushSync(this.actor))
+        .catch(this.onCheckpointError);
+      return;
+    }
+    writer.writeAsync(this.actor);
+  }
+
+  private readonly onCheckpointError = (error: unknown): void => {
+    console.error("checkpoint sync failed", error);
+  };
 
   private rejectAndRecord(connection: Connection, cmdId: string, code: RejectionCode): void {
     const frame: ServerFrame = { t: "reject", cmdId, code, message: REJECTION_MESSAGES[code] };

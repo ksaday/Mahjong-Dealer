@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { SEAT_ORDER } from "@mahjong-dealer/shared";
 import { TableHarness } from "../testing/table-harness.js";
+import { TableActor } from "./actor.js";
+import { createDeterministicEntropy } from "../testing/deterministic-entropy.js";
 
 function readyAllAndDeal(harness: TableHarness): void {
   harness.seatAll();
@@ -245,5 +247,46 @@ describe("crash / restart (docs/29_Disaster_Recovery.md; DD-29, DD-30)", () => {
     const state = harness.state();
     if (state.lifecycle !== "in_play") throw new Error("unreachable");
     expect(state.locations.hands.east).toHaveLength(15);
+  });
+
+  it("preserves currentGameId across a crash and restart, minted fresh at start_deal", () => {
+    const harness = TableHarness.create({ seed: 3 });
+    expect(harness.currentGameId()).toBeNull(); // idle: nothing to checkpoint yet
+    readyAllAndDeal(harness);
+    const gameId = harness.currentGameId();
+    expect(gameId).not.toBeNull();
+
+    harness.crash();
+    harness.restart();
+    expect(harness.currentGameId()).toBe(gameId);
+  });
+});
+
+describe("TableActor.fromRestoredParts (docs/29_Disaster_Recovery.md, process-restart recovery)", () => {
+  it("starts idle with a caller-supplied table when no checkpoint exists", () => {
+    const harness = TableHarness.create({ seed: 4 });
+    harness.seatAll();
+    const table = harness.table();
+
+    const actor = TableActor.fromRestoredParts({ id: "harness-table", entropy: createDeterministicEntropy(4) }, table, null);
+    expect(actor.tableSnapshot).toEqual(table);
+    expect(actor.gameStateSnapshot.lifecycle).toBe("idle");
+    expect(actor.currentGameId).toBeNull();
+  });
+
+  it("composes a caller-supplied table with a checkpoint's game-state portion", () => {
+    const harness = TableHarness.create({ seed: 5 });
+    readyAllAndDeal(harness);
+    const snapshot = harness.snapshotForTest();
+    const freshTable = harness.table(); // stands in for a TableRepository-sourced Table
+
+    const actor = TableActor.fromRestoredParts(
+      { id: "harness-table", entropy: createDeterministicEntropy(5) },
+      freshTable,
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId },
+    );
+    expect(actor.gameStateSnapshot).toEqual(harness.state());
+    expect(actor.seqNumber).toBe(harness.seqNumber());
+    expect(actor.currentGameId).toBe(snapshot.gameId);
   });
 });

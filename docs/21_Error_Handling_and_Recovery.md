@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 21_Error_Handling_and_Recovery.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the error taxonomy, the client-facing error contract, server-side recovery, and the fail-safe stance. Does **not** own the code catalogs (`19`, `33_API/Error_Code_Catalog.md`), logging (`20`), connection recovery (`22`), or disaster recovery (`29`). |
 
 ---
@@ -190,8 +190,16 @@ relying on a developer resisting the temptation while debugging an incident.
 ## 7. Startup and shutdown
 
 **Startup.** Verify configuration and secrets — refusing to start on a missing or default secret
-(`NFR-044`) — then verify schema version, then accept traffic. Table actors start lazily on first
-binding, so a checkpoint that fails verification affects one table rather than the service.
+(`NFR-044`) — then verify schema version, then restore every non-closed table's actor (`docs/29`,
+crash recovery), then accept traffic. Restoration is eager, not lazy: `server`'s table registry has
+only ever created an actor once, at table-creation time, and held it for the process's life — there
+is no "actor doesn't exist yet, create it on demand" path anywhere else in the design for restoration
+to slot into lazily. Eager restore is therefore the design actually consistent with what is built, not
+a deviation from it. The property this section originally cared about — a bad checkpoint affecting one
+table rather than the service — is preserved a different way: each table's restoration attempt is
+independently caught, so a checkpoint that fails verification marks only that table unavailable (the
+same freeze posture `§4`'s consistency-failure handling already describes) while every other table's
+restoration, and startup itself, proceeds normally.
 
 **Graceful shutdown.** Stop accepting new connections; send `notice { service_restarting }`; flush
 every checkpoint synchronously; close sockets with `1012 SERVICE_RESTART`; exit. Clients reconnect
@@ -217,6 +225,7 @@ planned restart loses nothing at all.
 | D-21-09 | The error reporter accepts no state parameter | Removes the possibility, not just the temptation. |
 | D-21-10 | Messages name mechanisms, never rules | The system does not know the rules, and a message implying otherwise would be a lie. |
 | D-21-11 | Synchronous checkpoint flush on graceful shutdown | Makes a planned restart lossless. |
+| D-21-12 | Table restoration at startup is eager, not lazy on first bind | The table registry has only ever created an actor once, eagerly, at creation time — lazy restoration would be a new mechanism with no matching lazy-creation path to share it with. Per-table try/catch isolation preserves the property lazy start was for. |
 
 ---
 
@@ -290,3 +299,4 @@ support can correlate.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial chapter |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | Checkpoint durability (`docs/29`) implemented: `§7`'s startup restoration corrected from "lazily on first binding" to the eager, per-table-isolated design actually built; `D-21-12` |

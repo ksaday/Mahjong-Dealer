@@ -13,6 +13,7 @@ import { registerAdminRoutes } from "../admin/http.js";
 import { AdminService } from "../admin/service.js";
 import type { AuditLogRepository } from "../audit/repository.js";
 import { registerAuthRoutes } from "../auth/http.js";
+import type { CheckpointWriter } from "../checkpoint/writer.js";
 import { NullBreachChecker, type BreachChecker } from "../auth/breach-checker.js";
 import type { AccountRepository, SessionRepository } from "../auth/repository.js";
 import { AuthService } from "../auth/service.js";
@@ -32,6 +33,8 @@ export interface BuildAppOptions {
   readonly tables: TableRepository;
   readonly auditLog: AuditLogRepository;
   readonly idempotency?: IdempotencyRepository;
+  /** docs/16 §5.3/docs/29: omit to leave checkpoint durability disabled — e.g. `bootstrap/app.test.ts`'s in-memory tests. */
+  readonly checkpointWriter?: CheckpointWriter;
   /** Defaults to `NullBreachChecker` — the breach-list source is an explicitly unresolved item (IMPLEMENTATION_READINESS_CHECKLIST.md §4.2), not decided here. */
   readonly breachChecker?: BreachChecker;
   /** docs/15 §6: CORS and the WebSocket origin check share this allow-list. Defaults to empty — accept nothing cross-origin until configured. */
@@ -58,7 +61,11 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     ...(options.now !== undefined ? { now: options.now } : {}),
   });
 
-  const manager = new TableManager(new CryptoEntropy(), (sessionId) => authService.isSessionActive(sessionId));
+  const manager = new TableManager(
+    new CryptoEntropy(),
+    (sessionId) => authService.isSessionActive(sessionId),
+    options.checkpointWriter,
+  );
 
   const tableService = new TableService({
     tables: options.tables,

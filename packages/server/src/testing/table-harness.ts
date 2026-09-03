@@ -90,6 +90,20 @@ export class TableHarness {
     return this.actor.seqNumber;
   }
 
+  currentGameId(): string | null {
+    return this.actor.currentGameId;
+  }
+
+  /** For tests exercising `TableActor.fromRestoredParts` directly — the same bytes `crash()` captures, without going through `restart()`. */
+  snapshotForTest(): ActorSnapshot {
+    return this.actor.snapshot();
+  }
+
+  /** For tests that need the live actor itself — e.g. `CheckpointWriter`, which takes a `TableActor` directly. */
+  actorForTest(): TableActor {
+    return this.actor;
+  }
+
   /** Administrative force-close (docs/18 §4.3) — not a wire command, so it bypasses `seat()`. */
   forceClose(reason: string): void {
     this.actor.forceClose(reason);

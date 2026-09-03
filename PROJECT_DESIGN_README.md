@@ -544,12 +544,11 @@ The CSRF/session double-submit check that guarded only `auth/http.ts`'s own rout
 into `auth/session-guard.ts` so this second route module authenticates state-changing requests the
 same way rather than a second, divergent implementation of a security-critical comparison.
 
-Not built: the live table registry's crash-recovery reconstruction from a checkpoint (docs/29) — a
-table created in an earlier process lifetime is invisible to a restarted process's `TableManager`,
-which this slice flags rather than papers over; and, as before, `postgres-repository.ts`'s
-table-facing counterpart is written against the schema but not exercised against a live database, for
-the same reason the auth one isn't. (`Idempotency-Key` on `POST /tables`, `D-18-10`, was closed later —
-see `idempotency_keys`, `docs/17 §5.12`.)
+Not built at this point: `postgres-repository.ts`'s table-facing counterpart is written against the
+schema but not exercised against a live database, for the same reason the auth one isn't.
+(`Idempotency-Key` on `POST /tables`, `D-18-10`, and the live table registry's crash-recovery
+reconstruction from a checkpoint were both closed later — see `idempotency_keys`, `docs/17 §5.12`, and
+`checkpoint/`, `docs/29`, respectively.)
 
 One bug worth naming here too: an early version of the `GET /tables/mine` test built `AuthService`
 and `TableService` against two *separate* `InMemoryAccountRepository` instances, so a seated guest's
