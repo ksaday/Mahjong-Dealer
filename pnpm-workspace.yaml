@@ -1,2 +1,9 @@
 packages:
   - "packages/*"
+
+# Install-time scripts are denied by default; each exception is reviewed
+# (docs/15_Security_Architecture.md §10). argon2's build script compiles or
+# downloads its native Argon2 binding, required for password hashing
+# (docs/15 §4.1). No other package's install script is approved.
+onlyBuiltDependencies:
+  - argon2

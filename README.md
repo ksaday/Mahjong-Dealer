@@ -136,7 +136,15 @@ limiting, structural schema validation, `cmdId` idempotency, staleness checking 
 order-sensitive commands), resumption with a 200-event backlog and a full-view fallback beyond it,
 and byte-based backpressure tracking — all written against a transport-agnostic `SocketLike`
 interface and unit-tested with no real network, then wired to a real `ws`-based WebSocket server and
-proven against an actual socket in a smoke test. Not built: heartbeat scheduling and session-
-revocation polling (both need a real timer loop this slice doesn't add, and revocation needs the
-session store Phase 3's auth half doesn't build yet). 186 tests passing overall. Still nothing in
+proven against an actual socket in a smoke test.
+
+The rest of Phase 3 — registration, login, sessions — is now in `server/src/auth/`: Argon2id password
+hashing with a server-side pepper, durable per-account lockout (`accounts.failed_logins`/
+`locked_until`), opaque SHA-256-hashed session tokens with absolute-and-idle expiry, double-submit
+CSRF, and 8 of the 14 REST endpoints in `docs/33_API/REST_Endpoint_Catalog.md §3` (accounts and
+sessions), wired up with Fastify and tested both as pure business logic (an in-memory repository) and
+end-to-end over real HTTP (Fastify's `inject()`). Not built: heartbeat scheduling and session-
+revocation polling on the gateway side (both need a real timer loop this slice doesn't add), the
+table and admin REST endpoints, and — like `db`'s own migrations — the Postgres-backed repository is
+written but not exercised against a live database. 235 tests passing overall. Still nothing in
 `web`.

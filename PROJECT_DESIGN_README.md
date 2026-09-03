@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0-2 complete; Phase 3's schema, Phase 4's table actor, and Phase 5's gateway started) |
+| **Status** | Design complete — implementation underway (Phase 0-2 complete; Phase 3's schema and auth, Phase 4's table actor, and Phase 5's gateway started) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -478,7 +478,47 @@ need a real timer loop this slice doesn't add, and revocation additionally needs
 Phase 3's auth half doesn't build yet. `bind`'s own rate limit (10 per session per minute, distinct
 from the per-connection command limit) is also not implemented.
 
-186 tests passing overall. No client code exists yet.
+**The rest of Phase 3 — registration, login, sessions** — is now in `server/src/auth/`
+(`docs/15_Security_Architecture.md`, `docs/04_User_Roles_and_Access.md`,
+`docs/33_API/REST_Endpoint_Catalog.md §3`), covering 8 of that catalog's 14 REST endpoints (accounts
+and sessions; the 5 table and 6 admin endpoints — the doc's own total is 19 by direct count, another
+discrepancy against its stated "fourteen," in the same spirit as the 39-vs-38 event count flagged
+above — are not built).
+
+`passwords.ts` hashes with Argon2id (a server-side pepper from `pepper.ts`, parameters set to a
+current baseline with a comment flagging the annual review docs/15 §4.1 requires) and enforces the
+length-plus-breach-check policy from the same section — the breach list's *source* is
+`IMPLEMENTATION_READINESS_CHECKLIST.md §4.2`'s own open item, so `breach-checker.ts` defines the
+interface and a null default rather than presupposing an answer. `tokens.ts` generates 256-bit
+session tokens and stores only their SHA-256 hash. `lockout.ts` implements the durable, progressive
+per-account lockout `docs/15 §7.1` requires live in PostgreSQL rather than memory — the exact curve
+(1 minute at 5 failures, doubling every 5 more, capped at an hour) is an implementation default in
+the same spirit as several of dealer-core's own defaults, not a value the docs pin down. `csrf.ts`
+implements the double-submit check. `service.ts` (`AuthService`) is the business logic — register,
+login, logout, session validation with both absolute and idle expiry, password change (revoking
+every other session but the initiating one), session listing/revocation — depending only on
+`repository.ts`'s interfaces, so it is fully tested against `memory-repository.ts` without a
+database. `http.ts` wires it to Fastify (this project's first use of the framework `ADR-0015` named)
+and is tested with Fastify's own `inject()`, exercising the real HTTP pipeline without a live
+listener.
+
+`postgres-repository.ts` is the real implementation, written against `db`'s schema — but, like `db`'s
+own migrations, **not exercised against a live database** in this environment, for the reason
+recorded in project memory: the only running Postgres on this machine belongs to a different,
+unrelated project and was left untouched. Also not implemented: `POST /accounts/me/password`'s own
+durable per-account rate limit (`docs/18 §6`) — there is no schema column for it, unlike login's
+`failed_logins`/`locked_until` — and the gateway's periodic session-revocation re-check
+(`docs/12 §4.3`) that would consume this session store to close a revoked session's live socket
+within 5 seconds.
+
+One bug worth naming: an early draft of the equivalent-work timing defense for unknown-account login
+attempts (`D-15-05` — identical response and timing for a wrong password and a nonexistent account)
+used a hand-written string made to *look* like a real Argon2id hash. It would have parsed
+differently from a genuine one and quietly defeated the timing equalization it existed for; fixed by
+computing it once, for real, from an actual call to the hashing function, rather than typing out a
+plausible-looking constant.
+
+235 tests passing overall. No client code exists yet.
 
 ---
 

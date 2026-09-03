@@ -1,0 +1,57 @@
+// Data-access interfaces for accounts and sessions (docs/17_Database_Design.md
+// §5.1, §5.2). `AuthService` (service.ts) depends only on these, so the
+// business logic is testable with an in-memory implementation
+// (memory-repository.ts) without a live database — the same discipline
+// dealer-core's injected entropy and the table actor's TableHarness
+// already follow. `postgres-repository.ts` is the real implementation,
+// written against `db`'s schema but not exercised against a live database
+// in this environment (see that file's module comment).
+import type { AccountRole, AccountRow, AccountStatus, SessionRow } from "@mahjong-dealer/db";
+
+export interface NewAccount {
+  readonly id: string;
+  readonly email: string;
+  readonly passwordHash: string;
+  readonly displayName: string;
+}
+
+export interface AccountRepository {
+  create(account: NewAccount): Promise<AccountRow>;
+  findByEmail(email: string): Promise<AccountRow | null>;
+  findById(id: string): Promise<AccountRow | null>;
+  updateDisplayName(id: string, displayName: string): Promise<void>;
+  updatePasswordHash(id: string, passwordHash: string): Promise<void>;
+  /** Durable lockout state (docs/15 §4.1, D-15-03) — never only in memory. */
+  setLoginFailure(id: string, failedLogins: number, lockedUntil: Date | null): Promise<void>;
+  setStatus(id: string, status: AccountStatus): Promise<void>;
+}
+
+export interface NewSession {
+  readonly id: string;
+  readonly accountId: string;
+  readonly tokenHash: Buffer;
+  readonly csrfSecret: string;
+  /**
+   * Supplied by the caller rather than defaulted inside the repository, so
+   * a test's injected clock actually governs `issued_at`/`last_seen_at` —
+   * a repository calling `new Date()` internally would silently ignore
+   * `AuthService`'s own injected `now` and defeat idle-timeout tests.
+   */
+  readonly issuedAt: Date;
+  readonly absoluteExpiresAt: Date;
+  readonly ip: string | null;
+  readonly userAgent: string | null;
+}
+
+export interface SessionRepository {
+  create(session: NewSession): Promise<SessionRow>;
+  findByTokenHash(tokenHash: Buffer): Promise<SessionRow | null>;
+  findById(id: string): Promise<SessionRow | null>;
+  touch(id: string, lastSeenAt: Date): Promise<void>;
+  revoke(id: string, revokedAt: Date): Promise<void>;
+  /** Every active session for an account, optionally excluding one (docs/33_API `POST /accounts/me/password`: "the initiating session survives"). */
+  revokeAllForAccount(accountId: string, revokedAt: Date, exceptSessionId?: string): Promise<void>;
+  listActiveForAccount(accountId: string): Promise<readonly SessionRow[]>;
+}
+
+export type { AccountRole, AccountRow, AccountStatus, SessionRow };

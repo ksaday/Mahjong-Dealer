@@ -10,12 +10,17 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@fastify/cookie": "11.1.2",
     "@mahjong-dealer/dealer-core": "workspace:*",
     "@mahjong-dealer/db": "workspace:*",
     "@mahjong-dealer/shared": "workspace:*",
+    "argon2": "0.45.1",
+    "fastify": "5.12.1",
+    "pg": "8.23.0",
     "ws": "8.21.3"
   },
   "devDependencies": {
+    "@types/pg": "8.23.1",
     "@types/ws": "8.18.1"
   }
 }
