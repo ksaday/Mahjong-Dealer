@@ -1,10 +1,10 @@
 // Connect tickets (docs/12_Realtime_WebSocket_Architecture.md §4.1;
 // docs/17_Database_Design.md §5.3). Real issuance is a REST endpoint,
 // authenticated by session, that verifies seat occupancy before minting
-// one (docs/12 §4) — that REST surface and the session/account layer
-// behind it are not built (Phase 3's auth half, Phase 5's REST half).
-// This is the gateway-facing half only: single-use, time-limited,
-// server-side claims the client never sees.
+// one (docs/12 §4) — see `tables/service.ts`'s `issueConnectTicket` and
+// `tables/http.ts`'s `POST /tables/{id}/connect-ticket`. This module is
+// the gateway-facing half: single-use, time-limited, server-side claims
+// the client never sees.
 //
 // Scope note: the real design stores `ticket_hash` in PostgreSQL, with
 // single-use enforced by a unique constraint rather than an
@@ -55,6 +55,22 @@ export class TicketStore {
       return null;
     }
     stored.redeemed = true;
+    const { accountId, sessionId, tableId, seat } = stored;
+    return { accountId, sessionId, tableId, seat };
+  }
+
+  /**
+   * Reads a ticket's claims without consuming it — for the multi-table
+   * router (`gateway/multi-table-router.ts`), which must learn a ticket's
+   * `tableId` before it knows which table's `TicketStore` should perform
+   * the real, consuming `redeem` inside that table's own `TableGateway`.
+   * Same `null` cases as `redeem`: unknown, expired, or already redeemed.
+   */
+  peek(ticket: string): TicketClaims | null {
+    const stored = this.tickets.get(ticket);
+    if (stored === undefined || stored.redeemed || stored.expiresAt <= this.now()) {
+      return null;
+    }
     const { accountId, sessionId, tableId, seat } = stored;
     return { accountId, sessionId, tableId, seat };
   }

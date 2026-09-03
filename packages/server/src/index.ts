@@ -1,8 +1,11 @@
 // Phases 3-5 (IMPLEMENTATION_READINESS_CHECKLIST.md §6): the per-table
-// actor (Phase 4), the socket gateway (Phase 5), accounts/sessions
-// (Phase 3's auth half), and the table REST surface (Phase 3's other
-// half, docs/33_API §4) are in place. Not built: the administrative
-// surface (docs/33_API §5) and the live table registry's crash-recovery
+// actor (Phase 4), the socket gateway (Phase 5) — now routed across many
+// live tables by `gateway/multi-table-router.ts`, not just the one
+// `attachWebSocketGateway` smoke-tests — accounts/sessions (Phase 3's
+// auth half), and the table REST surface (Phase 3's other half,
+// docs/33_API §4) are in place. Not built: the administrative surface
+// (docs/33_API §5), heartbeat scheduling and session-revocation polling
+// (docs/12 §7, §4.3), and the live table registry's crash-recovery
 // reconstruction from a checkpoint (see tables/manager.ts's module
 // comment). See table/actor.ts, gateway/gateway.ts, auth/service.ts, and
 // tables/service.ts's module comments for scope detail.
@@ -35,8 +38,10 @@ export type { SocketLike } from "./gateway/socket.js";
 export { TicketStore } from "./gateway/tickets.js";
 export type { TicketClaims } from "./gateway/tickets.js";
 export { createCommandRateLimiter, TokenBucket } from "./gateway/rate-limit.js";
-export { attachWebSocketGateway } from "./gateway/ws-server.js";
+export { attachWebSocketGateway, wsToSocketLike } from "./gateway/ws-server.js";
 export type { AttachGatewayOptions } from "./gateway/ws-server.js";
+export { attachMultiTableGateway } from "./gateway/multi-table-router.js";
+export type { AttachMultiTableGatewayOptions } from "./gateway/multi-table-router.js";
 
 export { hashPassword, verifyPassword, checkPasswordPolicy } from "./auth/passwords.js";
 export type { PasswordPolicyViolation } from "./auth/passwords.js";

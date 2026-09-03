@@ -38,18 +38,7 @@ export function attachWebSocketGateway(options: AttachGatewayOptions): WebSocket
       }
     }
 
-    const socket: SocketLike = {
-      send(data, onFlushed) {
-        ws.send(data, (error) => {
-          if (error === undefined) onFlushed?.();
-        });
-      },
-      close(code, reason) {
-        ws.close(code, reason);
-      },
-    };
-
-    const handle = options.gateway.acceptConnection(socket);
+    const handle = options.gateway.acceptConnection(wsToSocketLike(ws));
     const bindTimer = setTimeout(() => handle.checkBindDeadline(), BIND_DEADLINE_GRACE_MS);
 
     ws.on("message", (data) => {
@@ -62,4 +51,18 @@ export function attachWebSocketGateway(options: AttachGatewayOptions): WebSocket
   });
 
   return wss;
+}
+
+/** The `ws`-to-`SocketLike` adapter, shared with `multi-table-router.ts` — one table's worth of framing decisions, not two. */
+export function wsToSocketLike(ws: WebSocket): SocketLike {
+  return {
+    send(data, onFlushed) {
+      ws.send(data, (error) => {
+        if (error === undefined) onFlushed?.();
+      });
+    },
+    close(code, reason) {
+      ws.close(code, reason);
+    },
+  };
 }

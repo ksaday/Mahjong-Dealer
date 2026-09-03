@@ -555,7 +555,25 @@ account had only ever been written into the auth side's copy. Fixed by sharing o
 instance between both services, which is also now a wiring note on `TableService` itself: in
 production this means one `AccountRepository` (one connection pool), not two.
 
-266 tests passing overall. No client code exists yet.
+**`gateway/multi-table-router.ts` now routes a real socket to the right table.**
+`attachWebSocketGateway` (`ws-server.ts`) serves exactly one `TableGateway` — fine for its own smoke
+test, but a real deployment has many live tables, each a separate entry in `tables/manager.ts`'s
+`TableManager`. A connect ticket already carries its `tableId` (`TicketClaims`), so
+`attachMultiTableGateway` peeks that claim — via a new, non-consuming `TicketStore.peek`, added
+alongside the existing consuming `redeem` — to find the right `TableGateway` *before* that gateway
+ever sees the socket, then replays the same bind frame into that gateway's own
+`acceptConnection`/`handleBind`, which performs the real, consuming redemption against that same
+`TicketStore` instance. `gateway.ts` itself is untouched beyond exporting the two small frame-parsing
+helpers both modules now share, so its own test suite needed no changes.
+
+One design point, not a bug: once routed, the destination gateway's own 5-second bind-deadline check
+becomes trivially satisfied, because its internal `connectedAt` is captured at the (slightly later)
+moment `acceptConnection` is finally called, not when the socket actually opened. The router carries
+its own deadline instead, measured from the real connection time — the same "must send a
+recognizable bind frame within 5 seconds" property the single-table server enforces, just enforced
+one layer up rather than by the reused logic underneath it.
+
+270 tests passing overall. No client code exists yet.
 
 ---
 

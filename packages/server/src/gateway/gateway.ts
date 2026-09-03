@@ -331,7 +331,8 @@ export class TableGateway {
   }
 }
 
-function parseJson(raw: string): unknown {
+/** Exported for `multi-table-router.ts`, which parses the same bind frame shape to peek a ticket's `tableId` before this gateway ever sees the connection. */
+export function parseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
@@ -339,7 +340,7 @@ function parseJson(raw: string): unknown {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

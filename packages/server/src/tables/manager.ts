@@ -41,6 +41,24 @@ export class TableManager {
   get(id: string): LiveTable | undefined {
     return this.live.get(id);
   }
+
+  /**
+   * Resolves an unredeemed connect ticket to the table it belongs to,
+   * without redeeming it — the multi-table router
+   * (`gateway/multi-table-router.ts`) uses this to find the right
+   * `TableGateway` before that gateway's own `acceptConnection` performs
+   * the real, consuming redemption. A ticket is scoped to the
+   * `TicketStore` of the table it was issued for, so this is a scan of
+   * live tables (each a cheap `Map` lookup) rather than a single
+   * indexed query — acceptable at the table-count scale a single
+   * process owns (`docs/17 §5.4`'s `owner_node`).
+   */
+  findTicketOwner(ticket: string): { readonly tableId: string; readonly live: LiveTable } | null {
+    for (const [tableId, live] of this.live) {
+      if (live.tickets.peek(ticket) !== null) return { tableId, live };
+    }
+    return null;
+  }
 }
 
 export type { LiveTable };

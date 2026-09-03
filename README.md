@@ -160,4 +160,12 @@ privately is now `auth/session-guard.ts`, shared by both route modules rather th
 built: reconstructing a table's live actor from its checkpoint after a restart (the in-memory
 registry only knows about tables created during its own process's lifetime), `Idempotency-Key` on
 table creation, the admin REST endpoints, and, again, a live-database exercise of the Postgres
-repository. 266 tests passing overall. Still nothing in `web`.
+repository.
+
+A real deployment has many live tables, but `attachWebSocketGateway` only ever served one
+`TableGateway`. `gateway/multi-table-router.ts` fixes that: it peeks the `tableId` a connect ticket
+already carries (via a new non-consuming `TicketStore.peek`, alongside the existing consuming
+`redeem`) to route each socket to its own table's gateway before that gateway ever sees it, then
+replays the same bind frame so the real redemption still happens inside the destination gateway,
+against the same ticket store. `gateway.ts` itself only changed by exporting two small frame-parsing
+helpers both modules share. 270 tests passing overall. Still nothing in `web`.
