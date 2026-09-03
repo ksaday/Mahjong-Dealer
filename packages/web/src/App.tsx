@@ -5,6 +5,7 @@ import { ToastProvider } from "./components/Toast.js";
 import { Home } from "./screens/Home.js";
 import { Login } from "./screens/Login.js";
 import { Register } from "./screens/Register.js";
+import { Table } from "./screens/Table.js";
 import { Welcome } from "./screens/Welcome.js";
 
 export function App() {
@@ -18,6 +19,7 @@ export function App() {
             <Route path="/register" element={<Register />} />
             <Route path="/login" element={<Login />} />
             <Route path="/home" element={<Home />} />
+            <Route path="/tables/:tableId" element={<Table />} />
           </Routes>
         </ToastProvider>
       </AuthProvider>

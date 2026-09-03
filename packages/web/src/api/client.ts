@@ -1,9 +1,10 @@
-// REST client for the accounts/sessions surface (docs/33_API/REST_Endpoint_Catalog.md §3).
-// Every request carries the session cookie automatically (`credentials:
-// "include"`); every non-safe method attaches the CSRF header read from the
-// non-HttpOnly `__Host-csrf` cookie (docs/15_Security_Architecture.md §4.2).
-// Only the eight accounts/sessions endpoints live here — the five table
-// endpoints (`18 §4.2`) are a later slice.
+// REST client core, plus the accounts/sessions surface
+// (docs/33_API/REST_Endpoint_Catalog.md §3). Every request carries the
+// session cookie automatically (`credentials: "include"`); every non-safe
+// method attaches the CSRF header read from the non-HttpOnly `__Host-csrf`
+// cookie (docs/15_Security_Architecture.md §4.2). The five table endpoints
+// (`18 §4.2`) are `tables.ts`, which reuses `request`/`ApiError` from here
+// rather than a second HTTP implementation.
 
 const CSRF_COOKIE = "__Host-csrf";
 const CSRF_HEADER = "X-CSRF-Token";
@@ -41,7 +42,7 @@ interface RequestOptions {
   readonly body?: unknown;
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = {};
   if (options.body !== undefined) {
