@@ -14,6 +14,11 @@ export default defineConfig({
         target: process.env["VITE_API_PROXY_TARGET"] ?? "http://localhost:3000",
         changeOrigin: false,
       },
+      // The socket gateway's default upgrade path (server/src/gateway/{ws-server,multi-table-router}.ts).
+      "/ws": {
+        target: process.env["VITE_API_PROXY_TARGET"] ?? "http://localhost:3000",
+        ws: true,
+      },
     },
   },
   build: {
