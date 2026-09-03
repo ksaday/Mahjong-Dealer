@@ -22,6 +22,9 @@ export interface AccountRow {
   readonly status: AccountStatus;
   readonly failed_logins: number;
   readonly locked_until: Date | null;
+  /** Durable rate-limit counter for `POST /accounts/me/password` (docs/15 §7.1, docs/18 §6: "3/hour"). */
+  readonly password_change_count: number;
+  readonly password_change_window_started_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 }

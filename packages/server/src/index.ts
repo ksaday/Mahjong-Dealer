@@ -54,6 +54,8 @@ export { NullBreachChecker, DenylistBreachChecker } from "./auth/breach-checker.
 export type { BreachChecker } from "./auth/breach-checker.js";
 export { generateSessionToken, generateCsrfSecret, hashToken } from "./auth/tokens.js";
 export { computeLockoutMinutes, isLockedOut } from "./auth/lockout.js";
+export { checkPasswordChangeWindow } from "./auth/password-change-limit.js";
+export type { PasswordChangeCheck, PasswordChangeWindow } from "./auth/password-change-limit.js";
 export { verifyCsrf } from "./auth/csrf.js";
 export { getPasswordPepper } from "./auth/pepper.js";
 export type {

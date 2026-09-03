@@ -241,6 +241,47 @@ describe("changePassword (docs/33_API POST /accounts/me/password)", () => {
     const reLogin = await service.login("nathan@example.com", "a brand new password here", CONTEXT);
     expect(reLogin.ok).toBe(true);
   });
+
+  it("rate-limits at 3/hour, durably (docs/15 §7.1, docs/18 §6), regardless of outcome", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const { service } = setUp(() => now);
+    const registered = await service.register("olivia@example.com", "correct horse battery", "Olivia");
+    if (!registered.ok) throw new Error("unreachable");
+    const login = await service.login("olivia@example.com", "correct horse battery", CONTEXT);
+    if (!login.ok) throw new Error("unreachable");
+
+    // First attempt wrong (still consumes the window), second and third succeed.
+    now = new Date("2026-01-01T00:05:00Z");
+    expect(
+      await service.changePassword(registered.accountId, "wrong password", "a brand new password", login.issued.session.id),
+    ).toEqual({ ok: false, code: "INVALID_CREDENTIALS" });
+
+    now = new Date("2026-01-01T00:10:00Z");
+    expect(
+      await service.changePassword(registered.accountId, "correct horse battery", "a brand new password 2", login.issued.session.id),
+    ).toEqual({ ok: true });
+
+    now = new Date("2026-01-01T00:15:00Z");
+    expect(
+      await service.changePassword(registered.accountId, "a brand new password 2", "a brand new password 3", login.issued.session.id),
+    ).toEqual({ ok: true });
+
+    // Fourth attempt within the same hour is rejected before the password is even checked.
+    now = new Date("2026-01-01T00:20:00Z");
+    const fourth = await service.changePassword(
+      registered.accountId,
+      "wrong on purpose",
+      "a brand new password 4",
+      login.issued.session.id,
+    );
+    expect(fourth).toEqual({ ok: false, code: "RATE_LIMITED", retryAfter: new Date("2026-01-01T01:05:00Z") });
+
+    // A new window opens once the first attempt's hour has fully elapsed.
+    now = new Date("2026-01-01T01:05:01Z");
+    expect(
+      await service.changePassword(registered.accountId, "a brand new password 3", "a brand new password 5", login.issued.session.id),
+    ).toEqual({ ok: true });
+  });
 });
 
 describe("listSessions / revokeOwnSession", () => {

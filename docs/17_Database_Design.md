@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 17_Database_Design.md |
-| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Status** | Ratified v0.3 — approved by the project owner, 2026-09-03 |
 | **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the physical schema: tables, columns, constraints, indexes, encryption, and privileges. Does **not** own what data exists or why (`16`), the privacy classification (`14`), or migration operations (`27`). |
 
@@ -88,10 +88,14 @@ seat rows, occupied or not.
 | `status` | `account_status` | `active` \| `disabled` | |
 | `failed_logins` | integer | Durable lockout counter (`15 §7`) | |
 | `locked_until` | timestamptz null | Durable lockout expiry | |
+| `password_change_count` | integer | Durable rate-limit counter for `POST /accounts/me/password` (`15 §7.1`, `18 §6`: "3/hour") | |
+| `password_change_window_started_at` | timestamptz null | Start of the current rate-limit window | |
 | `created_at`, `updated_at` | timestamptz | | |
 
-The lockout columns are in the database rather than a cache deliberately: a control that vanishes on
-restart is one an attacker waits out (`D-15-03`).
+The lockout and password-change rate-limit columns are in the database rather than a cache
+deliberately: a control that vanishes on restart is one an attacker waits out (`D-15-03`). The
+password-change columns hold a flat fixed window (`D-17-14`), not the lockout columns' progressive
+curve — the endpoint's own limit (`18 §6`) is flat.
 
 ### 5.2 `sessions`
 
@@ -383,6 +387,7 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | D-17-11 | Correction checkpoints bounded by deletion on write | The window is bounded by construction, not by a scheduled job that could fail. |
 | D-17-12 | UUIDv7 primary keys | Time-ordered index locality without exposing sequential identifiers. |
 | D-17-13 | `idempotency_keys` caches a full response, not just a fact-of-completion flag | A client retrying `POST /tables` after a lost response needs the identical body back, `join_code` included (`18 §7`, `D-18-11`) — a completion flag alone would tell it the create succeeded but not what it needs to act on it. |
+| D-17-14 | `POST /accounts/me/password`'s durable rate limit is a flat fixed window, not `failed_logins`' progressive curve | `18 §6` specifies a flat 3/hour, not an escalating one; reusing the lockout shape would invent a policy the spec doesn't call for. |
 
 ---
 
@@ -401,6 +406,8 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | A separate schema per table (multi-tenancy) | Enormous complexity for four-player private tables. |
 | A fact-of-completion flag instead of a cached response for `Idempotency-Key` | Doesn't solve the problem: a client with a lost response still can't recover its `join_code` (`D-17-13`). |
 | No TTL — rely on the caller to delete its own key | A client that never retries leaves the row forever; an unconditional short TTL needs no cooperation. |
+| Progressive lockout for password-change attempts, mirroring login | `18 §6` specifies a flat 3/hour, not an escalating curve (`D-17-14`). |
+| An in-memory counter for the password-change limit | The same reasoning as the login lockout: it vanishes on restart, which an attacker can wait out (`D-15-03`). |
 
 ---
 
@@ -463,3 +470,4 @@ analysis.
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial schema: 11 tables |
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `idempotency_keys` (`§5.12`) for `D-18-10`; twelve tables; `D-17-13` |
+| 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `accounts.password_change_count`/`password_change_window_started_at` (`§5.1`) for the durable `POST /accounts/me/password` limit; `D-17-14` |

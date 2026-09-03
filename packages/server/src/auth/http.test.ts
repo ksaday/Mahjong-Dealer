@@ -157,3 +157,52 @@ describe("authenticated routes", () => {
     expect(profileResponse.statusCode).toBe(401);
   });
 });
+
+describe("POST /api/v1/accounts/me/password (docs/18 §6: 3/hour, durable)", () => {
+  it("returns 429 with Retry-After once the durable per-account limit is exhausted", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const rateLimitedApp = Fastify();
+    const service = new AuthService({
+      accounts: new InMemoryAccountRepository(),
+      sessions: new InMemorySessionRepository(),
+      breachChecker: new NullBreachChecker(),
+      env: { PASSWORD_PEPPER: "test-pepper" },
+      now: () => now,
+    });
+    registerAuthRoutes(rateLimitedApp, { authService: service });
+    await rateLimitedApp.ready();
+
+    await rateLimitedApp.inject({
+      method: "POST",
+      url: "/api/v1/accounts",
+      payload: { email: "penny@example.com", password: "correct horse battery", display_name: "Penny" },
+    });
+    const loginResponse = await rateLimitedApp.inject({
+      method: "POST",
+      url: "/api/v1/sessions",
+      payload: { email: "penny@example.com", password: "correct horse battery" },
+    });
+    const cookies = parseCookies(loginResponse.headers["set-cookie"]);
+    const headers = { cookie: cookieHeader(cookies), "x-csrf-token": cookies["__Host-csrf"]! };
+
+    for (let i = 0; i < 3; i += 1) {
+      const response = await rateLimitedApp.inject({
+        method: "POST",
+        url: "/api/v1/accounts/me/password",
+        headers,
+        payload: { current_password: "wrong current password", new_password: "a brand new password" },
+      });
+      expect(response.statusCode).toBe(401); // wrong current_password every time, but still consumes the window
+    }
+
+    const fourth = await rateLimitedApp.inject({
+      method: "POST",
+      url: "/api/v1/accounts/me/password",
+      headers,
+      payload: { current_password: "wrong current password", new_password: "a brand new password" },
+    });
+    expect(fourth.statusCode).toBe(429);
+    expect(fourth.json().error.code).toBe("RATE_LIMITED");
+    expect(Number(fourth.headers["retry-after"])).toBeGreaterThan(0);
+  });
+});

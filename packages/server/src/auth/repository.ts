@@ -45,6 +45,8 @@ export interface AccountRepository {
   updatePasswordHash(id: string, passwordHash: string): Promise<void>;
   /** Durable lockout state (docs/15 §4.1, D-15-03) — never only in memory. */
   setLoginFailure(id: string, failedLogins: number, lockedUntil: Date | null): Promise<void>;
+  /** Durable rate-limit state for `POST /accounts/me/password` (docs/15 §7.1, docs/18 §6) — same reasoning as `setLoginFailure`. */
+  setPasswordChangeAttempt(id: string, count: number, windowStartedAt: Date): Promise<void>;
   setStatus(id: string, status: AccountStatus): Promise<void>;
   /** `GET /admin/accounts` (docs/18 §4.3, `FR-160`) — metadata only, which is everything `AccountRow` already is. */
   list(query: AccountListQuery): Promise<AccountListPage>;

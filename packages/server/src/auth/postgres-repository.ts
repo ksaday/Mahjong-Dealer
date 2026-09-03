@@ -67,6 +67,13 @@ export class PostgresAccountRepository implements AccountRepository {
     ]);
   }
 
+  async setPasswordChangeAttempt(id: string, count: number, windowStartedAt: Date): Promise<void> {
+    await this.pool.query(
+      "UPDATE accounts SET password_change_count = $2, password_change_window_started_at = $3 WHERE id = $1",
+      [id, count, windowStartedAt],
+    );
+  }
+
   async setStatus(id: string, status: AccountStatus): Promise<void> {
     await this.pool.query("UPDATE accounts SET status = $2, updated_at = now() WHERE id = $1", [id, status]);
   }

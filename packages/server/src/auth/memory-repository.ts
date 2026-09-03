@@ -19,6 +19,8 @@ export class InMemoryAccountRepository implements AccountRepository {
       status: "active",
       failed_logins: 0,
       locked_until: null,
+      password_change_count: 0,
+      password_change_window_started_at: null,
       created_at: now,
       updated_at: now,
     };
@@ -50,6 +52,11 @@ export class InMemoryAccountRepository implements AccountRepository {
 
   setLoginFailure(id: string, failedLogins: number, lockedUntil: Date | null): Promise<void> {
     this.mutate(id, (row) => ({ ...row, failed_logins: failedLogins, locked_until: lockedUntil }));
+    return Promise.resolve();
+  }
+
+  setPasswordChangeAttempt(id: string, count: number, windowStartedAt: Date): Promise<void> {
+    this.mutate(id, (row) => ({ ...row, password_change_count: count, password_change_window_started_at: windowStartedAt }));
     return Promise.resolve();
   }
 

@@ -15,6 +15,7 @@ describe("listMigrations", () => {
       "0001_initial_schema.sql",
       "0002_roles_and_grants.sql",
       "0003_idempotency_keys.sql",
+      "0004_password_change_rate_limit.sql",
     ]);
   });
 });
@@ -149,5 +150,13 @@ describe("0003_idempotency_keys.sql — the Idempotency-Key replay cache (docs/1
     const sql = await migrationText("0003_idempotency_keys.sql");
     expect(sql).toContain("GRANT SELECT, INSERT ON idempotency_keys TO app;");
     expect(sql).not.toMatch(/GRANT[^;]*TO app_readonly/u);
+  });
+});
+
+describe("0004_password_change_rate_limit.sql — durable POST /accounts/me/password limit (docs/17 §5.1, §9 D-17-14)", () => {
+  it("adds the two counter columns to accounts", async () => {
+    const sql = await migrationText("0004_password_change_rate_limit.sql");
+    expect(sql).toContain("ADD COLUMN password_change_count integer NOT NULL DEFAULT 0");
+    expect(sql).toContain("ADD COLUMN password_change_window_started_at timestamptz");
   });
 });

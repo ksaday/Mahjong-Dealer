@@ -506,11 +506,12 @@ listener.
 `postgres-repository.ts` is the real implementation, written against `db`'s schema — but, like `db`'s
 own migrations, **not exercised against a live database** in this environment, for the reason
 recorded in project memory: the only running Postgres on this machine belongs to a different,
-unrelated project and was left untouched. Also not implemented: `POST /accounts/me/password`'s own
-durable per-account rate limit (`docs/18 §6`) — there is no schema column for it, unlike login's
-`failed_logins`/`locked_until` — and the gateway's periodic session-revocation re-check
-(`docs/12 §4.3`) that would consume this session store to close a revoked session's live socket
-within 5 seconds.
+unrelated project and was left untouched. Also not implemented (at this point in the log): the
+gateway's periodic session-revocation re-check (`docs/12 §4.3`) that would consume this session store
+to close a revoked session's live socket within 5 seconds — see the later entry recording when that
+landed. (`POST /accounts/me/password`'s own durable per-account rate limit, `docs/18 §6`, was closed
+later too — see `accounts.password_change_count`/`password_change_window_started_at`, `docs/17 §5.1`,
+`D-17-14`.)
 
 One bug worth naming: an early draft of the equivalent-work timing defense for unknown-account login
 attempts (`D-15-05` — identical response and timing for a wrong password and a nonexistent account)

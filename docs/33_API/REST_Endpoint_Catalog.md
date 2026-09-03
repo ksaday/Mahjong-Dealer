@@ -85,9 +85,10 @@ Errors:    400 MALFORMED · 422 DISPLAY_NAME_INVALID
 Auth: session    Rate: 3/hour per account (durable)
 Request:   { "current_password": string, "new_password": string }
 Response:  204
-Errors:    401 INVALID_CREDENTIALS · 422 PASSWORD_TOO_SHORT · 422 PASSWORD_BREACHED
+Errors:    401 INVALID_CREDENTIALS · 422 PASSWORD_TOO_SHORT · 422 PASSWORD_BREACHED · 429 RATE_LIMITED
 ```
-Revokes every other session; the initiating session survives.
+Revokes every other session; the initiating session survives. The rate limit is consumed by every
+attempt reaching this endpoint, successful or not (`17 §5.1`, `D-17-14`).
 
 ### `GET /accounts/me/sessions`
 ```
@@ -246,3 +247,4 @@ Machine-checked by `TC-A10`. A registered route matching any pattern below fails
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role) | Initial catalog: 14 endpoints, 9 absence patterns |
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | Noted the `Idempotency-Key` replay exception on `POST /tables`'s join-code note |
+| 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `429 RATE_LIMITED` to `POST /accounts/me/password`'s error list, now that its durable limit is implemented |

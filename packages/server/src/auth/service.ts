@@ -7,6 +7,7 @@ import { uuidv7 } from "@mahjong-dealer/db";
 import type { AuditLogRepository } from "../audit/repository.js";
 import type { BreachChecker } from "./breach-checker.js";
 import { computeLockoutMinutes, isLockedOut } from "./lockout.js";
+import { checkPasswordChangeWindow } from "./password-change-limit.js";
 import { checkPasswordPolicy, hashPassword, verifyPassword } from "./passwords.js";
 import type { AccountRepository, SessionRepository } from "./repository.js";
 import { generateCsrfSecret, generateSessionToken, hashToken } from "./tokens.js";
@@ -56,7 +57,8 @@ export type LoginResult =
 
 export type ChangePasswordResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly code: "INVALID_CREDENTIALS" | "PASSWORD_TOO_SHORT" | "PASSWORD_BREACHED" };
+  | { readonly ok: false; readonly code: "INVALID_CREDENTIALS" | "PASSWORD_TOO_SHORT" | "PASSWORD_BREACHED" }
+  | { readonly ok: false; readonly code: "RATE_LIMITED"; readonly retryAfter: Date };
 
 export interface AuthenticatedSession {
   readonly account: AccountRow;
@@ -233,7 +235,17 @@ export class AuthService {
     await this.accounts.updateDisplayName(accountId, displayName);
   }
 
-  /** Revokes every other session for the account; the initiating session survives (docs/33_API `POST /accounts/me/password`). */
+  /**
+   * Revokes every other session for the account; the initiating session
+   * survives (docs/33_API `POST /accounts/me/password`).
+   *
+   * The durable 3/hour rate limit (docs/15 §7.1, docs/18 §6) is checked
+   * and consumed here, before verifying `currentPassword` — every call
+   * that reaches this point counts against the window regardless of
+   * outcome, the same attempt-based accounting `tables/http.ts` uses for
+   * `POST /tables`, not `lockout.ts`'s failure-only counting: this
+   * endpoint's own limit is flat, not progressive.
+   */
   async changePassword(
     accountId: string,
     currentPassword: string,
@@ -242,6 +254,13 @@ export class AuthService {
   ): Promise<ChangePasswordResult> {
     const account = await this.accounts.findById(accountId);
     if (account === null) return { ok: false, code: "INVALID_CREDENTIALS" };
+
+    const check = checkPasswordChangeWindow(
+      { count: account.password_change_count, windowStartedAt: account.password_change_window_started_at },
+      this.now(),
+    );
+    if (!check.allowed) return { ok: false, code: "RATE_LIMITED", retryAfter: check.retryAfter };
+    await this.accounts.setPasswordChangeAttempt(accountId, check.next.count, check.next.windowStartedAt);
 
     const valid = await verifyPassword(account.password_hash, currentPassword, this.env);
     if (!valid) return { ok: false, code: "INVALID_CREDENTIALS" };

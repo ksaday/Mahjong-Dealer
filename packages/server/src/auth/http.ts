@@ -2,14 +2,15 @@
 // docs/33_API/REST_Endpoint_Catalog.md §3) — 8 of that catalog's
 // endpoints. Thin: every handler validates its own request shape, then
 // delegates to `AuthService`. The five table endpoints are `tables/http.ts`
-// (docs/18 §4.2); the administrative surface (docs/18 §4.3) is not built.
-// Session/CSRF verification is shared with that module via
+// (docs/18 §4.2); the administrative surface (docs/18 §4.3) is `admin/`.
+// Session/CSRF verification is shared with those modules via
 // `session-guard.ts`.
 //
-// Scope note: `POST /accounts/me/password`'s own durable per-account rate
-// limit (docs/18 §6: 3/hour) is not implemented — there is no schema
-// column for it yet (docs/17 §5.1 has none), unlike login's
-// failed_logins/locked_until. Flagged rather than silently skipped.
+// `POST /accounts/me/password`'s own durable per-account rate limit
+// (docs/18 §6: 3/hour) is enforced inside `AuthService.changePassword`
+// via `password-change-limit.ts`, against `accounts.password_change_count`/
+// `password_change_window_started_at` (docs/17 §5.1) — this handler only
+// translates the `RATE_LIMITED` result to `429`.
 import cookie from "@fastify/cookie";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { TokenBucket } from "../gateway/rate-limit.js";
@@ -156,6 +157,11 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
       session.session.id,
     );
     if (!result.ok) {
+      if (result.code === "RATE_LIMITED") {
+        const retryAfterSeconds = Math.max(1, Math.ceil((result.retryAfter.getTime() - Date.now()) / 1000));
+        await reply.header("Retry-After", String(retryAfterSeconds)).code(429).send(errorBody("RATE_LIMITED", "Too many password changes."));
+        return;
+      }
       const status = result.code === "INVALID_CREDENTIALS" ? 401 : 422;
       await reply.code(status).send(errorBody(result.code, "Could not change password."));
       return;
