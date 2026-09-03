@@ -90,6 +90,7 @@ export class TableService {
     if (!occupied.ok) {
       throw new Error(`unreachable: occupying the first seat of a freshly created table failed (${occupied.code})`);
     }
+    live.gateway.deliverPendingFrames(); // a no-op today (nobody else can be connected to a table that doesn't exist yet), kept for the "every occupySeat is followed by a delivery" invariant
 
     await this.tables.create({
       id,
@@ -119,6 +120,7 @@ export class TableService {
       // uniform 404 — there is deliberately no distinct TABLE_FULL response.
       return occupied.code === "ALREADY_SEATED" ? { ok: false, code: "ALREADY_SEATED" } : { ok: false, code: "NOT_FOUND" };
     }
+    live.gateway.deliverPendingFrames(); // lets already-connected seats see the new player join live (docs/19 §6.1 SeatOccupied, FR-140)
 
     await this.tables.setStatus(row.id, live.actor.tableSnapshot.status);
     await this.syncSeatsFromActor(row.id, live.actor.tableSnapshot);

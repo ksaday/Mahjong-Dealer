@@ -88,6 +88,9 @@ describe("TableManager.restoreLiveTables", () => {
     expect(afterLive!.actor.tableSnapshot.seats.east.occupant).toBe(accountBySeat.east);
     expect(afterLive!.actor.tableSnapshot.seats.east.displayName).toBe("East Player");
     expect(afterLive!.actor.tableSnapshot.host).toBe("east");
+    // Connection state is transient/gateway-owned, never persisted (docs/16 §3) —
+    // every seat restores as absent until its client actually reconnects and binds.
+    expect(afterLive!.actor.tableSnapshot.seats.east.connection).toBe("absent");
   });
 
   it("a cmdId retried after a restart returns its original seq without re-applying (docs/13 §4, ADR-0009)", async () => {

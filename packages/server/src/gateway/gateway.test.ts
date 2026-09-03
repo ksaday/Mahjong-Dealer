@@ -75,7 +75,9 @@ describe("bind (docs/12 §4.2)", () => {
   it("succeeds with a valid ticket and returns bound with the current seq", () => {
     const { gateway, tickets } = setUp();
     const { socket } = bindSeat(gateway, tickets, "east");
-    expect(socket.framesOfType("bound")).toEqual([{ t: "bound", seat: "east", protocolVersion: 1, seq: 0 }]);
+    // seq is 4, not 0: setUp() occupies all four seats before this test binds,
+    // and occupySeat now broadcasts SeatOccupied (docs/19 §6.1, FR-140).
+    expect(socket.framesOfType("bound")).toEqual([{ t: "bound", seat: "east", protocolVersion: 1, seq: 4 }]);
   });
 
   it("closes 4001 when the first frame is not bind", () => {
@@ -493,6 +495,74 @@ describe("auto-pause on disconnection (docs/22 §5)", () => {
     const east = bindSeat(gateway, tickets, "east");
     expect(() => east.handle.onClose()).not.toThrow();
     expect(actor.gameStateSnapshot.lifecycle).toBe("idle");
+  });
+});
+
+describe("presence (docs/22, FR-140)", () => {
+  it("a seat's first-ever bind broadcasts SeatReconnected to the other seats (docs/19 §6.1)", () => {
+    const { tickets, gateway } = setUp();
+    const south = bindSeat(gateway, tickets, "south");
+
+    bindSeat(gateway, tickets, "east");
+
+    const reconnected = south.socket
+      .framesOfType("event")
+      .find(
+        (f) =>
+          (f["ev"] as Record<string, unknown>)["type"] === "SeatReconnected" &&
+          (f["ev"] as Record<string, unknown>)["seat"] === "east",
+      );
+    expect(reconnected).toEqual(expect.objectContaining({ ev: { type: "SeatReconnected", seat: "east" } }));
+  });
+
+  it("onClose marks a seat absent and broadcasts it even outside in_play/concluding, where auto-pause's own submit is a no-op", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+    const south = bindSeat(gateway, tickets, "south");
+
+    east.handle.onClose();
+
+    const disconnected = south.socket
+      .framesOfType("event")
+      .find((f) => (f["ev"] as Record<string, unknown>)["type"] === "SeatDisconnected");
+    expect(disconnected).toEqual(
+      expect.objectContaining({ ev: { type: "SeatDisconnected", seat: "east", reason: "absent" } }),
+    );
+  });
+
+  it("a heartbeat's first missed pong marks a seat away and broadcasts it (docs/22 §4)", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+    const south = bindSeat(gateway, tickets, "south");
+
+    east.handle.onHeartbeatMiss();
+
+    const disconnected = south.socket
+      .framesOfType("event")
+      .find((f) => (f["ev"] as Record<string, unknown>)["type"] === "SeatDisconnected");
+    expect(disconnected).toEqual(
+      expect.objectContaining({ ev: { type: "SeatDisconnected", seat: "east", reason: "away" } }),
+    );
+  });
+
+  it("an out-of-band occupySeat is visible to an already-connected seat once the gateway delivers it (TableService.joinTable's own path)", () => {
+    const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
+    const tickets = new TicketStore();
+    const gateway = new TableGateway({ actor, tickets });
+    const occupiedEast = actor.occupySeat("player-east", "East");
+    if (!occupiedEast.ok) throw new Error("unreachable");
+    const east = bindSeat(gateway, tickets, "east");
+
+    const occupiedSouth = actor.occupySeat("player-south", "South");
+    if (!occupiedSouth.ok) throw new Error("unreachable");
+    gateway.deliverPendingFrames();
+
+    const occupied = east.socket
+      .framesOfType("event")
+      .find((f) => (f["ev"] as Record<string, unknown>)["type"] === "SeatOccupied");
+    expect(occupied).toEqual(
+      expect.objectContaining({ ev: { type: "SeatOccupied", seat: "south", displayName: "South" } }),
+    );
   });
 });
 

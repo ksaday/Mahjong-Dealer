@@ -536,3 +536,120 @@ describe("a second game on the same table (FR-117, docs/09 §7, D-09-10, D-10-14
     expect(actor.tableSnapshot.seats.west.ready).toBe(true);
   });
 });
+
+describe("seat presence (docs/19 §6.1, docs/22, FR-140)", () => {
+  function newActor(seed: number): TableActor {
+    return new TableActor({ id: "t1", entropy: createDeterministicEntropy(seed) });
+  }
+
+  it("occupySeat broadcasts SeatOccupied to every seat, including itself", () => {
+    const actor = newActor(1);
+    const before = actor.seqNumber;
+    const result = actor.occupySeat("p1", "Alice");
+    if (!result.ok) throw new Error("unreachable");
+
+    expect(actor.seqNumber).toBe(before + 1);
+    for (const seat of SEAT_ORDER) {
+      expect(actor.framesFor(seat).at(-1)).toEqual(
+        expect.objectContaining({ kind: "event", ev: { type: "SeatOccupied", seat: "east", displayName: "Alice" } }),
+      );
+    }
+  });
+
+  it("vacateSeat broadcasts SeatVacated to every seat", () => {
+    const actor = newActor(2);
+    const occupied = actor.occupySeat("p1", "Alice");
+    if (!occupied.ok) throw new Error("unreachable");
+    const before = actor.seqNumber;
+
+    actor.vacateSeat("east");
+
+    expect(actor.seqNumber).toBe(before + 1);
+    for (const seat of SEAT_ORDER) {
+      expect(actor.framesFor(seat).at(-1)).toEqual(
+        expect.objectContaining({ kind: "event", ev: { type: "SeatVacated", seat: "east" } }),
+      );
+    }
+  });
+
+  it("setSeatConnection: connected -> away fires SeatDisconnected{reason:'away'} (docs/22 §4's first miss)", () => {
+    const actor = newActor(3);
+    actor.occupySeat("p1", "Alice");
+    actor.setSeatConnection("east", "connected");
+    const before = actor.seqNumber;
+
+    actor.setSeatConnection("east", "away");
+
+    expect(actor.seqNumber).toBe(before + 1);
+    expect(actor.tableSnapshot.seats.east.connection).toBe("away");
+    expect(actor.framesFor("south").at(-1)).toEqual(
+      expect.objectContaining({ kind: "event", ev: { type: "SeatDisconnected", seat: "east", reason: "away" } }),
+    );
+  });
+
+  it("setSeatConnection: away -> absent fires a second SeatDisconnected{reason:'absent'} (docs/22 §4's second miss)", () => {
+    const actor = newActor(4);
+    actor.occupySeat("p1", "Alice");
+    actor.setSeatConnection("east", "connected");
+    actor.setSeatConnection("east", "away");
+    const before = actor.seqNumber;
+
+    actor.setSeatConnection("east", "absent");
+
+    expect(actor.seqNumber).toBe(before + 1);
+    expect(actor.framesFor("south").at(-1)).toEqual(
+      expect.objectContaining({ kind: "event", ev: { type: "SeatDisconnected", seat: "east", reason: "absent" } }),
+    );
+  });
+
+  it("setSeatConnection: a clean connected -> absent skips away and still fires SeatDisconnected once", () => {
+    const actor = newActor(5);
+    actor.occupySeat("p1", "Alice");
+    actor.setSeatConnection("east", "connected");
+    const before = actor.seqNumber;
+
+    actor.setSeatConnection("east", "absent");
+
+    expect(actor.seqNumber).toBe(before + 1);
+    expect(actor.framesFor("south").at(-1)).toEqual(
+      expect.objectContaining({ kind: "event", ev: { type: "SeatDisconnected", seat: "east", reason: "absent" } }),
+    );
+  });
+
+  it("setSeatConnection: any path back to connected fires SeatReconnected", () => {
+    const actor = newActor(6);
+    actor.occupySeat("p1", "Alice");
+    actor.setSeatConnection("east", "absent");
+    const before = actor.seqNumber;
+
+    actor.setSeatConnection("east", "connected");
+
+    expect(actor.seqNumber).toBe(before + 1);
+    expect(actor.framesFor("south").at(-1)).toEqual(
+      expect.objectContaining({ kind: "event", ev: { type: "SeatReconnected", seat: "east" } }),
+    );
+  });
+
+  it("setSeatConnection is a no-op when the value is unchanged — no spurious re-broadcast", () => {
+    const actor = newActor(7);
+    actor.occupySeat("p1", "Alice");
+    actor.setSeatConnection("east", "connected");
+    const before = actor.seqNumber;
+    const framesBefore = actor.framesFor("south").length;
+
+    actor.setSeatConnection("east", "connected");
+
+    expect(actor.seqNumber).toBe(before);
+    expect(actor.framesFor("south")).toHaveLength(framesBefore);
+  });
+
+  it("viewFor reflects the real connection state — not a hardcoded default (closes the view.ts gap)", () => {
+    const actor = newActor(8);
+    actor.occupySeat("p1", "Alice");
+    actor.setSeatConnection("east", "away");
+
+    const summary = actor.viewFor("east").seats.find((s) => s.seat === "east");
+
+    expect(summary?.connection).toBe("away");
+  });
+});

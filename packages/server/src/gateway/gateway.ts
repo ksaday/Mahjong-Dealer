@@ -73,6 +73,8 @@ export interface ConnectionHandle {
   onClose(): void;
   /** A real timer should call this ~5s after the socket opens (docs/12 §4.2). No-op once bound. */
   checkBindDeadline(): void;
+  /** A real heartbeat should call this once, on the *first* missed pong (docs/22 §4's `away`) — the second miss already reaches `onClose` via `ws.terminate()`. No-op if not yet bound. */
+  onHeartbeatMiss(): void;
 }
 
 export class TableGateway {
@@ -211,6 +213,12 @@ export class TableGateway {
       if (connection !== null && this.connections.get(connection.seat) === connection) {
         const seat = connection.seat;
         this.connections.delete(seat);
+        // Unconditional, independent of autoPauseOnAbsence's own request_pause
+        // outcome — that submit is a no-op outside in_play/concluding, which
+        // would otherwise leave a lobby-phase disconnect invisible to the
+        // other seats (docs/22 §3-§5, FR-140).
+        this.actor.setSeatConnection(seat, "absent");
+        this.deliverNewFrames();
         this.autoPauseOnAbsence(seat);
       }
     };
@@ -221,7 +229,19 @@ export class TableGateway {
       }
     };
 
-    return { onMessage, onClose, checkBindDeadline };
+    const onHeartbeatMiss = (): void => {
+      if (connection !== null && this.connections.get(connection.seat) === connection) {
+        this.markSeatAway(connection.seat);
+      }
+    };
+
+    return { onMessage, onClose, checkBindDeadline, onHeartbeatMiss };
+  }
+
+  /** docs/22 §4's first missed heartbeat — a quieter signal than `onClose`'s `absent`, but still public (FR-140). */
+  private markSeatAway(seat: Seat): void {
+    this.actor.setSeatConnection(seat, "away");
+    this.deliverNewFrames();
   }
 
   private handleBind(socket: SocketLike, connectedAt: number, raw: string): Connection | null {
@@ -263,6 +283,12 @@ export class TableGateway {
     };
     connection.lastDeliveredSeq = this.actor.seqNumber;
     connection.send(JSON.stringify(boundFrame));
+    // Unconditional, independent of autoResumeOnReturn's own request_resume
+    // outcome — covers both a genuine reconnect and a seat's very first-ever
+    // bind, neither of which broadcast anything without this (docs/22 §5,
+    // FR-140).
+    this.actor.setSeatConnection(claims.seat, "connected");
+    this.deliverNewFrames();
     this.autoResumeOnReturn(claims.seat);
     return connection;
   }
@@ -513,6 +539,18 @@ export class TableGateway {
     const frame: ServerFrame = { t: "reject", cmdId, code, message: REJECTION_MESSAGES[code] };
     connection.send(JSON.stringify(frame));
     this.receipts.set(cmdId, { seat: connection.seat, frame });
+  }
+
+  /**
+   * Public wrapper around `deliverNewFrames` for callers that mutate the
+   * actor directly, outside this gateway's own command pipeline —
+   * `TableService.createTable`/`joinTable` call `actor.occupySeat` straight
+   * on the live actor (docs/05 §5, ahead of any bound socket), then this to
+   * flush the `SeatOccupied` broadcast to whichever other seats are already
+   * connected.
+   */
+  deliverPendingFrames(): void {
+    this.deliverNewFrames();
   }
 
   /** Flushes every frame produced since each connected seat's cursor, in order. */

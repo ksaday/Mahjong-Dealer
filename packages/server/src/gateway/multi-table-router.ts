@@ -87,7 +87,9 @@ export function attachMultiTableGateway(options: AttachMultiTableGatewayOptions)
     const preResolveTimer = setTimeout(() => {
       if (handle === null) ws.close(4001, "BIND_REQUIRED");
     }, BIND_DEADLINE_GRACE_MS);
-    const stopHeartbeat = startHeartbeat(ws, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+    const stopHeartbeat = startHeartbeat(ws, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS, () =>
+      handle?.onHeartbeatMiss(),
+    );
 
     ws.on("message", (data) => {
       const raw = data.toString();

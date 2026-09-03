@@ -14,10 +14,14 @@ import { nextSeat, SEAT_ORDER, type Seat } from "@mahjong-dealer/shared";
 export const TABLE_STATUSES = ["open", "seated", "closed", "abandoned"] as const;
 export type TableStatus = (typeof TABLE_STATUSES)[number];
 
+/** docs/22_Disconnect_and_Reconnect.md §3 — the wire-facing three of that section's four states (`WireSeatSummary.connection`); `empty` is signaled separately via `occupant`/`displayName`, not folded in here. */
+export type SeatConnection = "connected" | "away" | "absent";
+
 export interface TableSeatState {
   readonly occupant: string | null;
   readonly displayName: string | null;
   readonly ready: boolean;
+  readonly connection: SeatConnection;
 }
 
 export interface Table {
@@ -28,7 +32,7 @@ export interface Table {
 }
 
 function emptySeat(): TableSeatState {
-  return { occupant: null, displayName: null, ready: false };
+  return { occupant: null, displayName: null, ready: false, connection: "absent" };
 }
 
 export function createTable(id: string): Table {
@@ -76,7 +80,7 @@ export function occupySeat(
   const seat = SEAT_ORDER.find((s) => table.seats[s].occupant === null);
   if (seat === undefined) return { ok: false, code: "TABLE_FULL" };
 
-  const seats = { ...table.seats, [seat]: { occupant: playerId, displayName, ready: false } };
+  const seats = { ...table.seats, [seat]: { occupant: playerId, displayName, ready: false, connection: "absent" as const } };
   const occupiedCount = SEAT_ORDER.filter((s) => seats[s].occupant !== null).length;
   const status: TableStatus = occupiedCount === SEAT_ORDER.length ? "seated" : "open";
   const host = table.host ?? seat;
@@ -117,6 +121,10 @@ function nextOccupiedHost(seats: Readonly<Record<Seat, TableSeatState>>, from: S
 
 export function setReady(table: Table, seat: Seat, ready: boolean): Table {
   return { ...table, seats: { ...table.seats, [seat]: { ...table.seats[seat], ready } } };
+}
+
+export function setConnection(table: Table, seat: Seat, connection: SeatConnection): Table {
+  return { ...table, seats: { ...table.seats, [seat]: { ...table.seats[seat], connection } } };
 }
 
 export function allReady(table: Table): boolean {

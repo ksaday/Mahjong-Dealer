@@ -60,7 +60,11 @@ export function attachWebSocketGateway(options: AttachGatewayOptions): WebSocket
 
     const handle = options.gateway.acceptConnection(wsToSocketLike(ws));
     const bindTimer = setTimeout(() => handle.checkBindDeadline(), BIND_DEADLINE_GRACE_MS);
-    const stopHeartbeat = startHeartbeat(ws, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
+    const stopHeartbeat = startHeartbeat(
+      ws,
+      options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS,
+      handle.onHeartbeatMiss,
+    );
 
     ws.on("message", (data) => {
       handle.onMessage(data.toString());
@@ -97,13 +101,16 @@ export function wsToSocketLike(ws: WebSocket): SocketLike {
  * with a `pong` *frame*, is a separate, already-implemented mechanism at
  * the envelope level, docs/12 §5.2).
  *
- * A ping unanswered by the next tick counts as one miss; two consecutive
+ * A ping unanswered by the next tick counts as one miss — surfaced via
+ * `onMiss`, docs/22 §4's `away` (`gateway.ts`'s `onHeartbeatMiss` →
+ * `markSeatAway` → `TableActor.setSeatConnection`) — and two consecutive
  * misses terminate the connection — `ws.terminate()`, not `.close()`,
  * because a connection this unresponsive cannot be trusted to complete a
  * graceful closing handshake. Termination fires the socket's own `close`
  * event exactly as any other disconnection does, which is what lets
- * `gateway.ts`'s existing `onClose` → `autoPauseOnAbsence` path handle it
- * with no heartbeat-specific code of its own.
+ * `gateway.ts`'s existing `onClose` → `autoPauseOnAbsence` (and, now,
+ * `setSeatConnection(seat, "absent")`) path handle it with no
+ * heartbeat-specific code of its own beyond `onMiss`.
  *
  * Detection is worst-case two full intervals (docs/12 §7's "~35s" for a
  * 15s interval is an approximation in the same spirit) — deliberately not
@@ -121,7 +128,8 @@ export interface HeartbeatSocket {
   terminate(): void;
 }
 
-export function startHeartbeat(ws: HeartbeatSocket, intervalMs: number): () => void {
+/** `onMiss`, when given, fires exactly once — on the *first* missed pong (docs/22 §4's `away`), before the second-miss `ws.terminate()` this function already performs on its own. */
+export function startHeartbeat(ws: HeartbeatSocket, intervalMs: number, onMiss?: () => void): () => void {
   let awaitingPong = false;
   let misses = 0;
 
@@ -133,6 +141,9 @@ export function startHeartbeat(ws: HeartbeatSocket, intervalMs: number): () => v
   const timer = setInterval(() => {
     if (awaitingPong) {
       misses += 1;
+      if (misses === 1) {
+        onMiss?.();
+      }
       if (misses >= MISSED_PONGS_TOLERATED) {
         ws.terminate();
         return;

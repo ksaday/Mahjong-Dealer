@@ -40,8 +40,8 @@ export interface SeatUnreadyEvent {
 export interface SeatDisconnectedEvent {
   readonly type: "SeatDisconnected";
   readonly seat: Seat;
-  /** docs/22_Disconnect_and_Reconnect.md owns the closed set of values; not yet implemented. */
-  readonly reason: string;
+  /** The presence state the seat just moved *to* (docs/22 §3-§4) — fires for both `away` (first missed heartbeat) and `absent` (second miss, or a clean close, which skips `away` entirely). */
+  readonly reason: "away" | "absent";
 }
 export interface SeatReconnectedEvent {
   readonly type: "SeatReconnected";

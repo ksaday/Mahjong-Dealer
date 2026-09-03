@@ -3,6 +3,7 @@ import { SEAT_ORDER } from "@mahjong-dealer/shared";
 import { InMemoryAccountRepository } from "../auth/memory-repository.js";
 import type { AccountRow } from "../auth/repository.js";
 import { createDeterministicEntropy } from "../testing/deterministic-entropy.js";
+import { MockSocket } from "../testing/mock-socket.js";
 import { InMemoryTableRepository } from "./memory-repository.js";
 import { TableManager } from "./manager.js";
 import { TableService } from "./service.js";
@@ -78,6 +79,32 @@ describe("joinTable (docs/33_API POST /tables/join)", () => {
 
     const joined = await service.joinTable(bob.id, bob.display_name, created.joinCode);
     expect(joined).toEqual({ ok: true, tableId: created.tableId, seat: "south" });
+  });
+
+  it("an already-connected seat sees a live SeatOccupied when a second player joins (FR-140, docs/19 §6.1)", async () => {
+    const { service, manager, account } = await setUp();
+    const alice = await account("Alice");
+    const bob = await account("Bob");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+
+    const live = manager.get(created.tableId);
+    if (live === undefined) throw new Error("unreachable");
+    const socket = new MockSocket();
+    const handle = live.gateway.acceptConnection(socket);
+    const ticket = live.tickets.issue({ accountId: alice.id, sessionId: "s1", tableId: created.tableId, seat: "east" });
+    handle.onMessage(
+      JSON.stringify({ t: "cmd", cmd: "bind", cmdId: "018f3a2b-1c3d-7e4f-8a12-000000000000", cseq: 1, d: { ticket } }),
+    );
+
+    await service.joinTable(bob.id, bob.display_name, created.joinCode);
+
+    const occupied = socket
+      .framesOfType("event")
+      .find((f) => (f["ev"] as Record<string, unknown>)["type"] === "SeatOccupied");
+    expect(occupied).toEqual(
+      expect.objectContaining({ ev: { type: "SeatOccupied", seat: "south", displayName: "Bob" } }),
+    );
   });
 
   it("returns NOT_FOUND for a wrong join code", async () => {

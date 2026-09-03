@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allReady, closeTable, createTable, occupySeat, setReady, vacateSeat } from "./table.js";
+import { allReady, closeTable, createTable, occupySeat, setConnection, setReady, vacateSeat } from "./table.js";
 
 describe("occupySeat (docs/05 §5, D-05-04)", () => {
   it("fills the lowest unoccupied seat in fixed order", () => {
@@ -17,6 +17,12 @@ describe("occupySeat (docs/05 §5, D-05-04)", () => {
   it("makes the first occupant the host", () => {
     const result = occupySeat(createTable("t1"), "p1", "Alice");
     if (result.ok) expect(result.table.host).toBe("east");
+  });
+
+  it("starts a newly occupied seat as absent — connected only once its socket actually binds (docs/22 §3, FR-140)", () => {
+    const result = occupySeat(createTable("t1"), "p1", "Alice");
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.table.seats.east.connection).toBe("absent");
   });
 
   it("transitions to seated once the fourth seat is filled", () => {
@@ -95,5 +101,18 @@ describe("readiness and closing", () => {
   it("closeTable is terminal", () => {
     const closed = closeTable(createTable("t1"));
     expect(closed.status).toBe("closed");
+  });
+});
+
+describe("setConnection (docs/22 §3, FR-140)", () => {
+  it("updates only the named seat's connection state", () => {
+    let table = createTable("t1");
+    for (const id of ["p1", "p2"]) {
+      const result = occupySeat(table, id, id);
+      if (result.ok) table = result.table;
+    }
+    table = setConnection(table, "east", "connected");
+    expect(table.seats.east.connection).toBe("connected");
+    expect(table.seats.south.connection).toBe("absent");
   });
 });

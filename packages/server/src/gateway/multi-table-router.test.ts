@@ -61,8 +61,10 @@ describe("attachMultiTableGateway — real socket routing", () => {
 
     const [boundA, boundB] = await Promise.all([bindAndAwaitFirstFrame(ticketA), bindAndAwaitFirstFrame(ticketB)]);
 
-    expect(boundA).toEqual({ t: "bound", seat: "east", protocolVersion: 1, seq: 0 });
-    expect(boundB).toEqual({ t: "bound", seat: "east", protocolVersion: 1, seq: 0 });
+    // seq is 1, not 0: each table occupies its one "east" seat before binding,
+    // and occupySeat now broadcasts SeatOccupied (docs/19 §6.1, FR-140).
+    expect(boundA).toEqual({ t: "bound", seat: "east", protocolVersion: 1, seq: 1 });
+    expect(boundB).toEqual({ t: "bound", seat: "east", protocolVersion: 1, seq: 1 });
     expect(tableA.gateway.isConnected("east")).toBe(true);
     expect(tableB.gateway.isConnected("east")).toBe(true);
   });
@@ -160,6 +162,21 @@ describe("attachMultiTableGateway — real socket routing", () => {
     client.on("close", () => (closed = true));
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(closed).toBe(false);
+    client.close();
+  });
+
+  it("tolerates a heartbeat miss before any bind ticket has resolved a handle (docs/12 §7, the pre-bind race)", async () => {
+    attachMultiTableGateway({ server: httpServer, manager, heartbeatIntervalMs: 20 });
+    const client = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      client.on("open", () => resolve());
+      client.on("error", reject);
+    });
+
+    // Deliberately never sends a bind frame — `handle` stays null in
+    // multi-table-router.ts while the heartbeat still ticks. A throw here
+    // would surface as an unhandled error and fail this test.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     client.close();
   });
 });

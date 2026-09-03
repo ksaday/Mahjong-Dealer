@@ -41,12 +41,20 @@ export type { CheckpointEntry } from "./table/checkpoints.js";
 
 export { toWireEvent } from "./table/events.js";
 
-export type { Table, TableRejection, TableRejectionCode, TableSeatState, TableStatus } from "./table/table.js";
+export type {
+  SeatConnection,
+  Table,
+  TableRejection,
+  TableRejectionCode,
+  TableSeatState,
+  TableStatus,
+} from "./table/table.js";
 export {
   allReady,
   closeTable,
   createTable,
   occupySeat,
+  setConnection,
   setReady,
   TABLE_STATUSES,
   vacateSeat,

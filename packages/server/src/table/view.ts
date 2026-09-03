@@ -43,7 +43,7 @@ export function projectTableView(table: Table, gameState: GameState, seat: Seat,
     return {
       seat: s,
       displayName: tableSeat.displayName,
-      connection: tableSeat.occupant === null ? "absent" : "connected", // presence tracking is Phase 5 (docs/22)
+      connection: tableSeat.connection,
       ready: tableSeat.ready,
       handSize: dealerSummary?.handSize ?? 0,
       exposures: (dealerSummary?.exposures ?? []).map((exposure) => ({

@@ -59,8 +59,10 @@ import {
   closeTable,
   createTable,
   occupySeat as occupyTableSeat,
+  setConnection,
   setReady,
   vacateSeat as vacateTableSeat,
+  type SeatConnection,
   type Table,
   type TableRejection,
 } from "./table.js";
@@ -184,11 +186,27 @@ export class TableActor {
     return projectTableView(this.table, this.gameState, seat, this.seq);
   }
 
+  /**
+   * Broadcasts a table-level (non-dealer-core) event to all four seats,
+   * each with its own fresh view — for the out-of-band actor mutations
+   * that don't go through `submit()`/`dispatch()` at all (`occupySeat`,
+   * `vacateSeat`, `forceClose`, `setSeatConnection`). Bumps `this.seq` the
+   * same way `submit()` does, so these broadcasts are ordinary entries in
+   * the wire's one authoritative sequence, not a side channel.
+   */
+  private broadcastEvent(event: TableEvent): void {
+    this.seq += 1;
+    for (const viewer of SEAT_ORDER) {
+      this.pushFrame(viewer, { kind: "event", seq: this.seq, ev: event, view: this.viewFor(viewer) });
+    }
+  }
+
   /** Not a wire command — table setup (docs/05 §5) ahead of the REST/ticket flow this slice doesn't build. */
   occupySeat(playerId: string, displayName: string): { readonly ok: true; readonly seat: Seat } | TableRejection {
     const result = occupyTableSeat(this.table, playerId, displayName);
     if (!result.ok) return result;
     this.table = result.table;
+    this.broadcastEvent({ type: "SeatOccupied", seat: result.seat, displayName });
     return { ok: true, seat: result.seat };
   }
 
@@ -196,7 +214,29 @@ export class TableActor {
     const result = vacateTableSeat(this.table, seat, isGameInProgress(this.gameState));
     if (!result.ok) return result;
     this.table = result.table;
+    this.broadcastEvent({ type: "SeatVacated", seat });
     return { ok: true };
+  }
+
+  /**
+   * Durable presence tracking (docs/22 §3-§5, FR-140) — not a wire command;
+   * the gateway calls this directly on bind, on close, and on a heartbeat's
+   * first missed pong (docs/22 §4's `away`), independent of whether a game
+   * is in progress. A no-op when `connection` already holds this value —
+   * avoids a spurious re-broadcast (a duplicate bind, or a heartbeat tick
+   * that changed nothing). `"away"`/`"absent"` both fire `SeatDisconnected`
+   * (the specific value distinguishes which); `"connected"` fires
+   * `SeatReconnected` — deliberately decoupled from `TablePaused`/
+   * `TableResumed` (`autoPauseOnAbsence`/`autoResumeOnReturn`), which only
+   * ever engage during `in_play`/`concluding` and so, on their own, leave a
+   * lobby-phase disconnect invisible to the other seats.
+   */
+  setSeatConnection(seat: Seat, connection: SeatConnection): void {
+    if (this.table.seats[seat].connection === connection) return;
+    this.table = setConnection(this.table, seat, connection);
+    this.broadcastEvent(
+      connection === "connected" ? { type: "SeatReconnected", seat } : { type: "SeatDisconnected", seat, reason: connection },
+    );
   }
 
   /**
@@ -218,11 +258,7 @@ export class TableActor {
     // "for the life of the game" scope docs/13 §4 gives it.
     this.commandReceipts.clear();
     this.gameId = null;
-    this.seq += 1;
-    const event: TableEvent = { type: "TableClosed", reason };
-    for (const viewer of SEAT_ORDER) {
-      this.pushFrame(viewer, { kind: "event", seq: this.seq, ev: event, view: this.viewFor(viewer) });
-    }
+    this.broadcastEvent({ type: "TableClosed", reason });
   }
 
   /** Crash-recovery/correction primitive (DD-29, DD-30): bytes from `coreCheckpoint`. */

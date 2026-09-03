@@ -4,7 +4,7 @@
 // already covers with `MockSocket`.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SEAT_ORDER } from "@mahjong-dealer/shared";
 import WebSocket from "ws";
 import { createDeterministicEntropy } from "../testing/deterministic-entropy.js";
@@ -54,7 +54,9 @@ describe("attachWebSocketGateway — real socket smoke test", () => {
       client.on("error", reject);
     });
 
-    expect(bound).toEqual({ t: "bound", seat: "east", protocolVersion: 1, seq: 0 });
+    // seq is 4, not 0: the shared gateway occupies all four seats before this
+    // test binds, and occupySeat now broadcasts SeatOccupied (docs/19 §6.1, FR-140).
+    expect(bound).toEqual({ t: "bound", seat: "east", protocolVersion: 1, seq: 4 });
     client.close();
   });
 
@@ -208,5 +210,38 @@ describe("startHeartbeat (unit — docs/12 §7)", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(pingCount()).toBe(countAtStop);
     expect(isTerminated()).toBe(false);
+  });
+
+  it("onMiss fires exactly once, on the first missed pong — not the second (docs/22 §4's away vs absent)", async () => {
+    const { socket, isTerminated } = fakeSocket();
+    const onMiss = vi.fn();
+    const stop = startHeartbeat(socket, 10, onMiss);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 15)); // 1st ping sent, no pong
+      expect(onMiss).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 10)); // 2nd tick: 1st miss recorded -> onMiss
+      expect(onMiss).toHaveBeenCalledTimes(1);
+      await new Promise((resolve) => setTimeout(resolve, 10)); // 3rd tick: 2nd miss -> terminate, not onMiss again
+      expect(isTerminated()).toBe(true);
+      expect(onMiss).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+    }
+  });
+
+  it("onMiss never fires when every pong arrives in time", async () => {
+    const { socket, sendPong } = fakeSocket();
+    const onMiss = vi.fn();
+    const stop = startHeartbeat(socket, 10, onMiss);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      sendPong();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      sendPong();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onMiss).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
   });
 });
