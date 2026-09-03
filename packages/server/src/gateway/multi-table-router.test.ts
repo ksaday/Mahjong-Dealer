@@ -99,4 +99,37 @@ describe("attachMultiTableGateway — real socket routing", () => {
     });
     expect(closeCode).toBe(4008);
   });
+
+  it("session-revocation polling covers a table created after the server was attached (docs/12 §4.3)", async () => {
+    let active = true;
+    const revocableManager = new TableManager(createDeterministicEntropy(1), () => Promise.resolve(active));
+    attachMultiTableGateway({ server: httpServer, manager: revocableManager, sessionRevocationPollMs: 20 });
+
+    const table = revocableManager.create("table-c");
+    table.actor.occupySeat("p-east-c", "East C");
+    const ticket = table.tickets.issue({ accountId: "c", sessionId: "s3", tableId: "table-c", seat: "east" });
+
+    const client = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      client.on("open", () => {
+        client.send(
+          JSON.stringify({
+            t: "cmd",
+            cmd: "bind",
+            cmdId: "018f3a2b-1c3d-7e4f-8a12-000000000002",
+            cseq: 1,
+            d: { ticket },
+          }),
+        );
+      });
+      client.on("message", () => resolve()); // the "bound" frame
+      client.on("error", reject);
+    });
+
+    active = false;
+    const closeCode = await new Promise<number>((resolve) => {
+      client.on("close", (code) => resolve(code));
+    });
+    expect(closeCode).toBe(4004);
+  });
 });

@@ -71,3 +71,38 @@ describe("attachWebSocketGateway — real socket smoke test", () => {
     expect(closeCode).toBe(4008);
   });
 });
+
+describe("session-revocation polling (docs/12 §4.3)", () => {
+  it("closes a bound real socket with 4004 once its session is reported inactive", async () => {
+    const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
+    for (const seat of SEAT_ORDER) actor.occupySeat(`p-${seat}`, seat);
+    const tickets = new TicketStore();
+    let active = true;
+    const gateway = new TableGateway({ actor, tickets, isSessionActive: () => Promise.resolve(active) });
+    attachWebSocketGateway({ server: httpServer, gateway, sessionRevocationPollMs: 20 });
+
+    const ticket = tickets.issue({ accountId: "a", sessionId: "s", tableId: "t1", seat: "east" });
+    const client = new WebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      client.on("open", () => {
+        client.send(
+          JSON.stringify({
+            t: "cmd",
+            cmd: "bind",
+            cmdId: "018f3a2b-1c3d-7e4f-8a12-000000000001",
+            cseq: 1,
+            d: { ticket },
+          }),
+        );
+      });
+      client.on("message", () => resolve()); // the "bound" frame
+      client.on("error", reject);
+    });
+
+    active = false;
+    const closeCode = await new Promise<number>((resolve) => {
+      client.on("close", (code) => resolve(code));
+    });
+    expect(closeCode).toBe(4004);
+  });
+});

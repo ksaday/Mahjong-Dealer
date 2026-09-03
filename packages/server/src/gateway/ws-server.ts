@@ -6,16 +6,21 @@
 // reasoning, applied to the boundary between the two).
 //
 // Scope note: origin checking (docs/12 §4.2) is implemented; heartbeats
-// (docs/12 §7) and session-revocation polling (docs/12 §4.3) are not —
-// see gateway.ts's module comment for why. The bind deadline (docs/12
-// §4.2) is enforced here with a real `setTimeout`, calling the gateway's
-// injected-clock-testable `checkBindDeadline`.
+// (docs/12 §7) are not — a real timer loop this slice doesn't add. The
+// bind deadline (docs/12 §4.2) is enforced here with a real `setTimeout`,
+// and session revocation (docs/12 §4.3) with a real `setInterval`, both
+// calling the gateway's own injected-clock-testable checks
+// (`checkBindDeadline`, `checkSessionRevocation`).
 import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { TableGateway } from "./gateway.js";
 import type { SocketLike } from "./socket.js";
 
 const BIND_DEADLINE_GRACE_MS = 5_200; // docs/12 §4.2's 5s deadline, plus scheduling slack
+// docs/12 §4.3 requires the *outcome* — closed within 5s of revocation —
+// without pinning a poll interval; 2s is an implementation default, the
+// same kind of unpinned constant `auth/lockout.ts`'s curve already is.
+const SESSION_REVOCATION_POLL_MS = 2_000;
 
 export interface AttachGatewayOptions {
   readonly server: HttpServer;
@@ -23,11 +28,18 @@ export interface AttachGatewayOptions {
   readonly path?: string;
   /** Origin allow-list (docs/12 §4.2). Omit to accept any origin — do not do this in production. */
   readonly allowedOrigins?: readonly string[];
+  /** Overrides `SESSION_REVOCATION_POLL_MS` — for tests that don't want to wait 2 real seconds. */
+  readonly sessionRevocationPollMs?: number;
 }
 
 /** Attaches the gateway to a real HTTP server's WebSocket upgrade path. Returns the underlying `WebSocketServer` for lifecycle management (e.g. `.close()`). */
 export function attachWebSocketGateway(options: AttachGatewayOptions): WebSocketServer {
   const wss = new WebSocketServer({ server: options.server, path: options.path ?? "/ws" });
+
+  const revocationPoll = setInterval(() => {
+    void options.gateway.checkSessionRevocation();
+  }, options.sessionRevocationPollMs ?? SESSION_REVOCATION_POLL_MS);
+  wss.on("close", () => clearInterval(revocationPoll));
 
   wss.on("connection", (ws: WebSocket, request) => {
     if (options.allowedOrigins !== undefined) {

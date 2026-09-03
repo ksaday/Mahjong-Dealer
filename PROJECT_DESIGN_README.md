@@ -473,10 +473,11 @@ this by keeping its own monotonic `seq`, and the gateway's staleness/resumption 
 top of *that* number, never `GameState.seq` directly — this is the same seam flagged when the actor
 was built, now load-bearing for the gateway too.
 
-Not built: heartbeat scheduling (`docs/12 §7`) and session-revocation polling (`docs/12 §4.3`) — both
-need a real timer loop this slice doesn't add, and revocation additionally needs the session store
-Phase 3's auth half doesn't build yet. `bind`'s own rate limit (10 per session per minute, distinct
-from the per-connection command limit) is also not implemented.
+Not built at the time of this slice: heartbeat scheduling (`docs/12 §7`) — still true — and
+session-revocation polling (`docs/12 §4.3`), which needed a real timer loop and, for revocation, the
+session store Phase 3's auth half hadn't built yet. Revocation polling was added once both existed;
+see below. `bind`'s own rate limit (10 per session per minute, distinct from the per-connection
+command limit) is also not implemented.
 
 **The rest of Phase 3 — registration, login, sessions** — is now in `server/src/auth/`
 (`docs/15_Security_Architecture.md`, `docs/04_User_Roles_and_Access.md`,
@@ -573,7 +574,30 @@ its own deadline instead, measured from the real connection time — the same "m
 recognizable bind frame within 5 seconds" property the single-table server enforces, just enforced
 one layer up rather than by the reused logic underneath it.
 
-270 tests passing overall. No client code exists yet.
+**Session revocation (docs/12 §4.3) is now built.** `TableGateway.checkSessionRevocation` closes any
+bound connection whose session has been revoked or expired, with `4004`, the same "callable check a
+real timer drives" pattern `checkBindDeadline` already established — snapshotting the connection list
+before awaiting anything and reusing `handleBind`'s own "a newer bind already replaced this one"
+identity guard, so a since-superseded connection can't wrongly evict its replacement from the map. A
+real `setInterval` in `ws-server.ts` drives it for the single-table server; `multi-table-router.ts`
+drives one shared interval across every table in `TableManager`, re-reading `TableManager.all()` on
+each tick so a table created after the server was attached is covered without re-registering
+anything. The poll interval (2s, an unpinned implementation default the same way `lockout.ts`'s curve
+is) is overridable per attach call, which is what lets the real-socket tests in both files finish in
+milliseconds instead of waiting out a real interval.
+
+The check itself is backed by a new `AuthService.isSessionActive(sessionId)`, deliberately lighter
+than `validateSession`: it takes a session id rather than a raw token — the gateway only ever has the
+id, carried in a connect ticket's own server-side claims, minted after the token was already verified
+once at REST time — and it never calls `touch()`, so a live socket doesn't silently reset its own idle
+timer just by existing. It enforces exactly the two invariants docs/12 §4.3 requires (revocation, and
+the account still being real and enabled) and deliberately leaves idle expiry to REST activity, as it
+already is — a distinction the test suite pins down explicitly rather than leaving to be discovered
+by accident. `Connection` gained a `sessionId` field to carry this (mirroring `seat`), which meant
+reordering its constructor's parameters — its one call site, `handleBind`, was the only thing to
+update.
+
+280 tests passing overall. No client code exists yet.
 
 ---
 

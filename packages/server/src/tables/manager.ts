@@ -24,7 +24,11 @@ interface LiveTable {
 export class TableManager {
   private readonly live = new Map<string, LiveTable>();
 
-  constructor(private readonly entropy: Entropy) {}
+  constructor(
+    private readonly entropy: Entropy,
+    /** Passed to every table's `TableGateway` (docs/12 §4.3) — see that constructor option's own doc comment. */
+    private readonly isSessionActive?: (sessionId: string) => Promise<boolean>,
+  ) {}
 
   create(id: string): LiveTable {
     if (this.live.has(id)) {
@@ -32,7 +36,11 @@ export class TableManager {
     }
     const actor = new TableActor({ id, entropy: this.entropy });
     const tickets = new TicketStore();
-    const gateway = new TableGateway({ actor, tickets });
+    const gateway = new TableGateway({
+      actor,
+      tickets,
+      ...(this.isSessionActive !== undefined ? { isSessionActive: this.isSessionActive } : {}),
+    });
     const entry: LiveTable = { actor, tickets, gateway };
     this.live.set(id, entry);
     return entry;
@@ -40,6 +48,11 @@ export class TableManager {
 
   get(id: string): LiveTable | undefined {
     return this.live.get(id);
+  }
+
+  /** Every live table, for the multi-table router's session-revocation poll — see `gateway/multi-table-router.ts`. */
+  all(): IterableIterator<LiveTable> {
+    return this.live.values();
   }
 
   /**

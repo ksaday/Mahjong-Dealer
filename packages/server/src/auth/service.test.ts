@@ -150,6 +150,56 @@ describe("validateSession (docs/15 §4.2 — absolute and idle expiry, revocatio
   });
 });
 
+describe("isSessionActive (docs/12 §4.3 — TableGateway.checkSessionRevocation's own check)", () => {
+  it("is true for a freshly issued session, by id rather than token", async () => {
+    const { service } = setUp();
+    await service.register("oscar@example.com", "correct horse battery", "Oscar");
+    const login = await service.login("oscar@example.com", "correct horse battery", CONTEXT);
+    if (!login.ok) throw new Error("unreachable");
+    expect(await service.isSessionActive(login.issued.session.id)).toBe(true);
+  });
+
+  it("is false once the session is revoked (logout)", async () => {
+    const { service } = setUp();
+    await service.register("peggy@example.com", "correct horse battery", "Peggy");
+    const login = await service.login("peggy@example.com", "correct horse battery", CONTEXT);
+    if (!login.ok) throw new Error("unreachable");
+    await service.logout(login.issued.session.id);
+    expect(await service.isSessionActive(login.issued.session.id)).toBe(false);
+  });
+
+  it("is false past absolute expiry", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const { service } = setUp(() => now);
+    await service.register("quentin@example.com", "correct horse battery", "Quentin");
+    const login = await service.login("quentin@example.com", "correct horse battery", CONTEXT);
+    if (!login.ok) throw new Error("unreachable");
+
+    now = new Date("2026-02-15T00:00:00Z"); // past the 30-day player absolute lifetime
+    expect(await service.isSessionActive(login.issued.session.id)).toBe(false);
+  });
+
+  it("does not extend idle expiry the way validateSession's touch() does", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const { service } = setUp(() => now);
+    await service.register("rupert@example.com", "correct horse battery", "Rupert");
+    const login = await service.login("rupert@example.com", "correct horse battery", CONTEXT);
+    if (!login.ok) throw new Error("unreachable");
+
+    now = new Date("2026-01-05T00:00:00Z"); // within idle limit; isSessionActive must not touch()
+    expect(await service.isSessionActive(login.issued.session.id)).toBe(true);
+
+    now = new Date("2026-01-10T00:00:00Z"); // 9 days after issuance, past the 7-day idle limit
+    expect(await service.isSessionActive(login.issued.session.id)).toBe(true); // this check itself ignores idle expiry
+    expect(await service.validateSession(login.issued.token)).toBeNull(); // but validateSession still enforces it
+  });
+
+  it("is false for an unknown session id", async () => {
+    const { service } = setUp();
+    expect(await service.isSessionActive("not-a-real-session-id")).toBe(false);
+  });
+});
+
 describe("changePassword (docs/33_API POST /accounts/me/password)", () => {
   it("rejects the wrong current password", async () => {
     const { service } = setUp();

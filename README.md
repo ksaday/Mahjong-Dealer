@@ -143,10 +143,10 @@ hashing with a server-side pepper, durable per-account lockout (`accounts.failed
 `locked_until`), opaque SHA-256-hashed session tokens with absolute-and-idle expiry, double-submit
 CSRF, and 8 of the 14 REST endpoints in `docs/33_API/REST_Endpoint_Catalog.md §3` (accounts and
 sessions), wired up with Fastify and tested both as pure business logic (an in-memory repository) and
-end-to-end over real HTTP (Fastify's `inject()`). Not built: heartbeat scheduling and session-
-revocation polling on the gateway side (both need a real timer loop this slice doesn't add), and —
-like `db`'s own migrations — the Postgres-backed repository is written but not exercised against a
-live database.
+end-to-end over real HTTP (Fastify's `inject()`). Not built: heartbeat scheduling on the gateway side
+(needs a real timer loop this slice doesn't add) — session-revocation polling was added once the
+session store existed, see below — and, like `db`'s own migrations, the Postgres-backed repository is
+written but not exercised against a live database.
 
 The table half of that same REST catalog is now in `server/src/tables/`: the remaining 5 endpoints —
 create, join, list mine, close, and connect-ticket — backed by a `TableManager` that holds one live
@@ -168,4 +168,15 @@ already carries (via a new non-consuming `TicketStore.peek`, alongside the exist
 `redeem`) to route each socket to its own table's gateway before that gateway ever sees it, then
 replays the same bind frame so the real redemption still happens inside the destination gateway,
 against the same ticket store. `gateway.ts` itself only changed by exporting two small frame-parsing
-helpers both modules share. 270 tests passing overall. Still nothing in `web`.
+helpers both modules share.
+
+Session revocation (docs/12 §4.3) is now built too: a bound socket whose session is revoked or
+expired closes with `4004` within a few seconds, not just at its next REST request. `TableGateway`
+gained `checkSessionRevocation`, a callable check (the same pattern as the existing bind-deadline
+check) polled by a real `setInterval` in both `ws-server.ts` and `multi-table-router.ts` — the latter
+across every live table on one shared interval. It's backed by a new, deliberately light
+`AuthService.isSessionActive`: unlike `validateSession`, it takes a session id rather than a raw
+token (the gateway only ever has the id, from a connect ticket's own server-side claims) and never
+calls `touch()`, so a live socket doesn't silently reset its own idle timer just by existing. Still
+not built: heartbeats (docs/12 §7) and the admin REST endpoints. 280 tests passing overall. Still
+nothing in `web`.

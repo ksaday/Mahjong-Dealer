@@ -171,9 +171,31 @@ export class AuthService {
     return { account, session };
   }
 
-  /** Effective within 5 seconds including live sockets, per the gateway's own session-revocation check (docs/15 §4.2, NFR-026) — that periodic re-check is not yet built (see gateway.ts's module comment). */
+  /** Effective within 5 seconds including live sockets, per `TableGateway.checkSessionRevocation` (docs/15 §4.2, NFR-026), which polls `isSessionActive` below. */
   async logout(sessionId: string): Promise<void> {
     await this.sessions.revoke(sessionId, this.now());
+  }
+
+  /**
+   * The check `TableGateway.checkSessionRevocation` (docs/12 §4.3) polls
+   * on a live socket's `sessionId`. Deliberately lighter than
+   * `validateSession`: it neither takes nor needs a raw token (the
+   * `sessionId` came from server-side connect-ticket claims minted after
+   * the token was already verified once, at REST time — docs/12 §4.1),
+   * and it never calls `touch()`. Touching here would mean a live socket
+   * silently resets its own idle timer just by existing, which is not a
+   * behavior docs/15 §4.2 specifies either way; this method enforces only
+   * the two invariants docs/12 §4.3 unambiguously requires — revocation
+   * and the account still being real and enabled — and leaves idle expiry
+   * to REST activity, as it already is.
+   */
+  async isSessionActive(sessionId: string): Promise<boolean> {
+    const session = await this.sessions.findById(sessionId);
+    if (session === null || session.revoked_at !== null) return false;
+    if (session.absolute_expires_at.getTime() <= this.now().getTime()) return false;
+
+    const account = await this.accounts.findById(session.account_id);
+    return account !== null && account.status !== "disabled";
   }
 
   async updateDisplayName(accountId: string, displayName: string): Promise<void> {

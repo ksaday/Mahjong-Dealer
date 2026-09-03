@@ -25,6 +25,12 @@
 // long a client may hold the socket open before sending a recognizable
 // bind frame at all — is enforced by this module's own `preResolveTimer`
 // instead, measured from the real connection time.
+//
+// Session revocation (docs/12 §4.3) polls every live table's gateway on
+// one shared interval, rather than one interval per table — cheap at the
+// table-count scale a single process owns, and it means a table created
+// after this function runs is covered on the very next tick without
+// this module needing to know about it.
 import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { TableManager } from "../tables/manager.js";
@@ -32,6 +38,7 @@ import { isRecord, parseJson, type ConnectionHandle } from "./gateway.js";
 import { wsToSocketLike } from "./ws-server.js";
 
 const BIND_DEADLINE_GRACE_MS = 5_200; // docs/12 §4.2's 5s deadline, plus scheduling slack
+const SESSION_REVOCATION_POLL_MS = 2_000; // see ws-server.ts's own constant of the same name
 
 export interface AttachMultiTableGatewayOptions {
   readonly server: HttpServer;
@@ -39,11 +46,23 @@ export interface AttachMultiTableGatewayOptions {
   readonly path?: string;
   /** Origin allow-list (docs/12 §4.2). Omit to accept any origin — do not do this in production. */
   readonly allowedOrigins?: readonly string[];
+  /** Overrides `SESSION_REVOCATION_POLL_MS` — for tests that don't want to wait 2 real seconds. */
+  readonly sessionRevocationPollMs?: number;
 }
 
 /** Attaches every live table's gateway to one WebSocket upgrade path, routed per connection by the bind frame's ticket. */
 export function attachMultiTableGateway(options: AttachMultiTableGatewayOptions): WebSocketServer {
   const wss = new WebSocketServer({ server: options.server, path: options.path ?? "/ws" });
+
+  // One poll per tick across every live table, not one interval per table
+  // — `TableManager.all()` is read fresh on each tick, so a table created
+  // after this call is covered without re-registering anything.
+  const revocationPoll = setInterval(() => {
+    for (const live of options.manager.all()) {
+      void live.gateway.checkSessionRevocation();
+    }
+  }, options.sessionRevocationPollMs ?? SESSION_REVOCATION_POLL_MS);
+  wss.on("close", () => clearInterval(revocationPoll));
 
   wss.on("connection", (ws: WebSocket, request) => {
     if (options.allowedOrigins !== undefined) {

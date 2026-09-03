@@ -11,6 +11,8 @@ const MAX_CONSECUTIVE_THROTTLES = 20; // docs/13 §10
 
 export class Connection {
   readonly seat: Seat;
+  /** The session this connection's ticket was minted for (docs/12 §4.3) — the key `checkSessionRevocation` polls against. */
+  readonly sessionId: string;
   readonly socket: SocketLike;
   readonly rateLimiter: TokenBucket;
   readonly boundAt: number;
@@ -28,8 +30,9 @@ export class Connection {
   throttleStreak = 0;
   private pendingBytes = 0;
 
-  constructor(seat: Seat, socket: SocketLike, now: () => number = Date.now) {
+  constructor(seat: Seat, sessionId: string, socket: SocketLike, now: () => number = Date.now) {
     this.seat = seat;
+    this.sessionId = sessionId;
     this.socket = socket;
     this.rateLimiter = createCommandRateLimiter(now);
     this.boundAt = now();

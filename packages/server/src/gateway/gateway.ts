@@ -4,14 +4,16 @@
 // with no real network, only `SocketLike` test doubles (`MockSocket`).
 //
 // Scope note: this implements binding, framing, `cseq` sequencing, `cmdId`
-// idempotency, schema validation, staleness checking, resumption, and
-// byte-based backpressure tracking. Deliberately not built: heartbeat
-// scheduling (docs/12 §7) and session-revocation polling (docs/12 §4.3),
-// both of which need a real timer loop and, for revocation, a session
-// store that doesn't exist yet (Phase 3's auth half). Both are exposed as
-// callable checks a real timer would drive (`checkBindDeadline`), not
-// implemented as internal `setInterval`s, so the logic stays testable
-// with an injected clock rather than real elapsed time.
+// idempotency, schema validation, staleness checking, resumption,
+// byte-based backpressure tracking, and session-revocation polling
+// (`checkSessionRevocation`, docs/12 §4.3, backed by `AuthService.
+// isSessionActive` once auth was built). Deliberately not built: heartbeat
+// scheduling (docs/12 §7) — a real timer loop this slice doesn't add.
+// Both revocation polling and the bind deadline are exposed as callable
+// checks a real timer would drive (`checkBindDeadline`,
+// `checkSessionRevocation`), not implemented as internal `setInterval`s,
+// so the logic stays testable with an injected clock/stub rather than
+// real elapsed time.
 import {
   COMMAND_SCHEMAS,
   SEAT_ORDER,
@@ -72,10 +74,19 @@ export class TableGateway {
   private readonly connections = new Map<Seat, Connection>();
   private readonly receipts = new Map<string, { readonly seat: Seat; readonly frame: ServerFrame }>();
 
-  constructor(options: { readonly actor: TableActor; readonly tickets: TicketStore; readonly now?: () => number }) {
+  private readonly isSessionActive: ((sessionId: string) => Promise<boolean>) | undefined;
+
+  constructor(options: {
+    readonly actor: TableActor;
+    readonly tickets: TicketStore;
+    readonly now?: () => number;
+    /** docs/12 §4.3: consulted by `checkSessionRevocation`. Omit to leave revocation polling disabled — e.g. `TableHarness`-driven tests with no session layer at all. */
+    readonly isSessionActive?: (sessionId: string) => Promise<boolean>;
+  }) {
     this.actor = options.actor;
     this.tickets = options.tickets;
     this.now = options.now ?? Date.now;
+    this.isSessionActive = options.isSessionActive;
   }
 
   /** For assertions and deliberate fault injection only (docs/26 §3.1's `harness.state()` reasoning applies here too). */
@@ -86,6 +97,32 @@ export class TableGateway {
   /** Whether a seat currently has a bound connection — `GET /tables/mine`'s `connected` field (docs/33_API §4.2). */
   isConnected(seat: Seat): boolean {
     return this.connections.has(seat);
+  }
+
+  /**
+   * A real timer should call this periodically (docs/12 §4.3): closes,
+   * with `4004`, any bound connection whose session has since been
+   * revoked or expired — "log out everywhere" must close an open table
+   * connection, not just stop new requests from authenticating
+   * (docs/15 §4). No-op if no `isSessionActive` checker was supplied
+   * (e.g. `TableHarness`-driven tests with no session layer at all).
+   *
+   * Snapshots the connection list before awaiting anything: a bind or
+   * close arriving mid-check must not be iterated over while it's
+   * changing, and the identity check below (mirroring `handleBind`'s own
+   * "a newer bind already replaced this one" guard) makes a since-replaced
+   * connection a safe no-op rather than accidentally closing its successor.
+   */
+  async checkSessionRevocation(): Promise<void> {
+    if (this.isSessionActive === undefined) return;
+    const bound = [...this.connections];
+    for (const [seat, connection] of bound) {
+      const active = await this.isSessionActive(connection.sessionId);
+      if (!active && this.connections.get(seat) === connection) {
+        connection.close(4004, "SESSION_REVOKED");
+        this.connections.delete(seat);
+      }
+    }
   }
 
   acceptConnection(socket: SocketLike): ConnectionHandle {
@@ -150,7 +187,7 @@ export class TableGateway {
       existing.close(4003, "REPLACED_BY_NEWER_BIND");
     }
 
-    const connection = new Connection(claims.seat, socket, this.now);
+    const connection = new Connection(claims.seat, claims.sessionId, socket, this.now);
     this.connections.set(claims.seat, connection);
 
     const boundFrame: ServerFrame = {

@@ -310,3 +310,100 @@ describe("rate limiting (docs/13 §10)", () => {
     expect(socket.closes).toEqual([{ code: 4009, reason: "RATE_LIMITED" }]);
   });
 });
+
+describe("checkSessionRevocation (docs/12 §4.3)", () => {
+  it("closes a bound connection with 4004 once its session is no longer active", async () => {
+    const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
+    const tickets = new TicketStore();
+    const sessionActive = new Map<string, boolean>([["s-active", true], ["s-revoked", false]]);
+    const gateway = new TableGateway({
+      actor,
+      tickets,
+      isSessionActive: (sessionId) => Promise.resolve(sessionActive.get(sessionId) ?? false),
+    });
+    for (const seat of SEAT_ORDER) actor.occupySeat(`p-${seat}`, seat);
+
+    const staying = new MockSocket();
+    gateway.acceptConnection(staying).onMessage(
+      JSON.stringify({
+        t: "cmd",
+        cmd: "bind",
+        cmdId: cmdId(0),
+        cseq: 1,
+        d: { ticket: tickets.issue({ accountId: "a", sessionId: "s-active", tableId: "t1", seat: "east" }) },
+      }),
+    );
+    const leaving = new MockSocket();
+    gateway.acceptConnection(leaving).onMessage(
+      JSON.stringify({
+        t: "cmd",
+        cmd: "bind",
+        cmdId: cmdId(1),
+        cseq: 1,
+        d: { ticket: tickets.issue({ accountId: "b", sessionId: "s-revoked", tableId: "t1", seat: "south" }) },
+      }),
+    );
+
+    await gateway.checkSessionRevocation();
+
+    expect(leaving.closes).toEqual([{ code: 4004, reason: "SESSION_REVOKED" }]);
+    expect(staying.isClosed).toBe(false);
+    expect(gateway.isConnected("south")).toBe(false);
+    expect(gateway.isConnected("east")).toBe(true);
+  });
+
+  it("is a no-op with no isSessionActive checker configured", async () => {
+    const { tickets, gateway } = setUp();
+    const bound = bindSeat(gateway, tickets, "east");
+    await gateway.checkSessionRevocation();
+    expect(bound.socket.isClosed).toBe(false);
+  });
+
+  it("a mid-flight rebind is not wrongly evicted by a stale, still-pending check", async () => {
+    const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
+    const tickets = new TicketStore();
+    let resolveCheck: (active: boolean) => void = () => {
+      throw new Error("unreachable");
+    };
+    const gateway = new TableGateway({
+      actor,
+      tickets,
+      isSessionActive: () => new Promise<boolean>((resolve) => (resolveCheck = resolve)),
+    });
+    actor.occupySeat("p-east", "east");
+
+    const first = new MockSocket();
+    gateway.acceptConnection(first).onMessage(
+      JSON.stringify({
+        t: "cmd",
+        cmd: "bind",
+        cmdId: cmdId(0),
+        cseq: 1,
+        d: { ticket: tickets.issue({ accountId: "a", sessionId: "s1", tableId: "t1", seat: "east" }) },
+      }),
+    );
+
+    const pending = gateway.checkSessionRevocation(); // begins awaiting isSessionActive("s1")
+
+    // While that check is still in flight, a newer bind replaces "east".
+    const second = new MockSocket();
+    gateway.acceptConnection(second).onMessage(
+      JSON.stringify({
+        t: "cmd",
+        cmd: "bind",
+        cmdId: cmdId(1),
+        cseq: 1,
+        d: { ticket: tickets.issue({ accountId: "a", sessionId: "s2", tableId: "t1", seat: "east" }) },
+      }),
+    );
+    expect(first.closes).toEqual([{ code: 4003, reason: "REPLACED_BY_NEWER_BIND" }]);
+
+    resolveCheck(false); // the stale check for the *old* connection resolves "inactive"
+    await pending;
+
+    // The stale check must not evict the replacement: connections.get("east")
+    // no longer points at `first`, so the identity guard must skip it.
+    expect(gateway.isConnected("east")).toBe(true);
+    expect(second.closes).toHaveLength(0);
+  });
+});

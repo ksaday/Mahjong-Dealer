@@ -1,11 +1,12 @@
 // Phases 3-5 (IMPLEMENTATION_READINESS_CHECKLIST.md §6): the per-table
 // actor (Phase 4), the socket gateway (Phase 5) — now routed across many
 // live tables by `gateway/multi-table-router.ts`, not just the one
-// `attachWebSocketGateway` smoke-tests — accounts/sessions (Phase 3's
-// auth half), and the table REST surface (Phase 3's other half,
-// docs/33_API §4) are in place. Not built: the administrative surface
-// (docs/33_API §5), heartbeat scheduling and session-revocation polling
-// (docs/12 §7, §4.3), and the live table registry's crash-recovery
+// `attachWebSocketGateway` smoke-tests, and polling for session
+// revocation on a real timer (`checkSessionRevocation`, docs/12 §4.3) —
+// accounts/sessions (Phase 3's auth half), and the table REST surface
+// (Phase 3's other half, docs/33_API §4) are in place. Not built: the
+// administrative surface (docs/33_API §5), heartbeat scheduling
+// (docs/12 §7), and the live table registry's crash-recovery
 // reconstruction from a checkpoint (see tables/manager.ts's module
 // comment). See table/actor.ts, gateway/gateway.ts, auth/service.ts, and
 // tables/service.ts's module comments for scope detail.
