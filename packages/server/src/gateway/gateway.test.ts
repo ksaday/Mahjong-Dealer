@@ -3,7 +3,7 @@ import { SEAT_ORDER, type Seat } from "@mahjong-dealer/shared";
 import { createDeterministicEntropy } from "../testing/deterministic-entropy.js";
 import { MockSocket } from "../testing/mock-socket.js";
 import { TableActor } from "../table/actor.js";
-import { TableGateway } from "./gateway.js";
+import { type ConnectionHandle, TableGateway } from "./gateway.js";
 import { TicketStore } from "./tickets.js";
 
 const VALID_CMD_ID_PREFIX = "018f3a2b-1c3d-7e4f-8a12-";
@@ -14,6 +14,7 @@ function cmdId(n: number): string {
 
 interface BoundSeat {
   readonly socket: MockSocket;
+  readonly handle: ConnectionHandle;
   send(frame: Record<string, unknown>): void;
 }
 
@@ -41,6 +42,7 @@ function bindSeat(gateway: TableGateway, tickets: TicketStore, seat: Seat): Boun
   let cseq = 0;
   return {
     socket,
+    handle,
     send: (frame) => {
       cseq += 1;
       nextCmdIdCounter += 1;
@@ -405,5 +407,64 @@ describe("checkSessionRevocation (docs/12 §4.3)", () => {
     // no longer points at `first`, so the identity guard must skip it.
     expect(gateway.isConnected("east")).toBe(true);
     expect(second.closes).toHaveLength(0);
+  });
+});
+
+/** `paused` only exists on `InPlayGameState`/`ConcludingGameState` — narrows the discriminated union for the assertions below. */
+function pausedBy(actor: TableActor): Seat | null {
+  const state = actor.gameStateSnapshot;
+  if (state.lifecycle !== "in_play" && state.lifecycle !== "concluding") return null;
+  return state.paused?.requestedBy ?? null;
+}
+
+describe("auto-pause on disconnection (docs/22 §5)", () => {
+  it("pauses the table when a bound seat's connection closes during play", () => {
+    const { actor, seats } = setUpDealtGame();
+    seats.east.handle.onClose();
+
+    expect(pausedBy(actor)).toBe("east");
+    const paused = seats.south.socket.framesOfType("event").find(
+      (f) => (f["ev"] as Record<string, unknown>)["type"] === "TablePaused",
+    );
+    // reason is "requested", not docs/22 §5's "seat_absent" — a known,
+    // separately-flagged gap (see autoPauseOnAbsence's own doc comment):
+    // dealer-core's request_pause carries no reason to distinguish the two.
+    expect(paused).toEqual(
+      expect.objectContaining({ ev: { type: "TablePaused", seat: "east", reason: "requested" } }),
+    );
+  });
+
+  it("clears the pause when the same seat rebinds, and does not touch an unrelated pause", () => {
+    const { actor, tickets, gateway, seats } = setUpDealtGame();
+    seats.east.handle.onClose();
+    expect(pausedBy(actor)).toBe("east");
+
+    bindSeat(gateway, tickets, "east"); // reconnect
+    expect(pausedBy(actor)).toBeNull();
+
+    const resumed = seats.south.socket.framesOfType("event").find(
+      (f) => (f["ev"] as Record<string, unknown>)["type"] === "TableResumed",
+    );
+    expect(resumed).toEqual(
+      expect.objectContaining({ ev: { type: "TableResumed", seat: "east" } }),
+    );
+  });
+
+  it("does not let a returning seat clear a different seat's own pause", () => {
+    const { actor, tickets, gateway, seats } = setUpDealtGame();
+    seats.south.send({ t: "cmd", cmd: "request_pause" }); // south pauses deliberately, while still connected
+    expect(pausedBy(actor)).toBe("south");
+
+    seats.east.handle.onClose(); // east's own auto-pause is rejected — already paused by south
+    bindSeat(gateway, tickets, "east"); // east's own auto-resume is rejected too — not east's pause to clear
+
+    expect(pausedBy(actor)).toBe("south");
+  });
+
+  it("is a harmless no-op outside in_play/concluding (no game started)", () => {
+    const { actor, tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+    expect(() => east.handle.onClose()).not.toThrow();
+    expect(actor.gameStateSnapshot.lifecycle).toBe("idle");
   });
 });

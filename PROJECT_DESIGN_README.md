@@ -597,7 +597,36 @@ by accident. `Connection` gained a `sessionId` field to carry this (mirroring `s
 reordering its constructor's parameters — its one call site, `handleBind`, was the only thing to
 update.
 
-280 tests passing overall. No client code exists yet.
+**Auto-pause on disconnection (docs/22 §5) is now built**, following the design already recorded in
+dealer-core's own `state.ts` module comment: "the host issues the same `request_pause` this module
+implements once it detects an absence." `TableGateway.onClose` calls the new `autoPauseOnAbsence`,
+and `handleBind` calls `autoResumeOnReturn` on every (re)bind; both simply submit dealer-core's own
+`request_pause`/`request_resume` for the affected seat and let dealer-core's own guards decide
+whether anything happens — `applyRequestPause` already rejects outside `in_play`/`concluding` or while
+already paused, and `applyRequestResume` already rejects for any seat but the one that holds the
+pause, so the gateway needs no lifecycle awareness of its own. Both call `deliverNewFrames()` on
+success, so already-connected seats see `TablePaused`/`TableResumed` live, the same delivery path any
+player-issued command uses.
+
+Building the first test surfaced two gaps, both left unfixed and documented rather than papered over
+in the test:
+
+- **`PauseState` holds exactly one seat** (`requestedBy`, dealer-core Phase 2). If seat A is already
+  auto-paused and seat B also goes absent, B's own `request_pause` is rejected — the table stays
+  paused (already the correct externally-visible state) but B's absence is never itself recorded, so
+  docs/22 §5.2's "if both hold, stays paused until both clear" isn't fully realized. Fixing it needs a
+  multi-holder `PauseState`, a dealer-core model change this slice didn't make.
+- **The wire event's `reason` field reads `"requested"`, never docs/22 §5's `"seat_absent"`** — a test
+  had to be corrected to expect the former after first asserting the latter. `toWireEvent` hardcodes
+  the string because dealer-core's own `request_pause` command and `TablePaused` event carry no reason
+  at all; distinguishing the two needs a reason to travel through dealer-core's command/event types,
+  which is its own small design question (command-supplied, or actor-overridden after the fact?) left
+  to a future slice.
+
+Still not built: heartbeat scheduling (docs/12 §7) — without it, only a *clean* socket close reaches
+`onClose`; an unclean network loss goes undetected — and the admin REST endpoints.
+
+284 tests passing overall. No client code exists yet.
 
 ---
 

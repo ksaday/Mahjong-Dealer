@@ -177,6 +177,18 @@ check) polled by a real `setInterval` in both `ws-server.ts` and `multi-table-ro
 across every live table on one shared interval. It's backed by a new, deliberately light
 `AuthService.isSessionActive`: unlike `validateSession`, it takes a session id rather than a raw
 token (the gateway only ever has the id, from a connect ticket's own server-side claims) and never
-calls `touch()`, so a live socket doesn't silently reset its own idle timer just by existing. Still
-not built: heartbeats (docs/12 §7) and the admin REST endpoints. 280 tests passing overall. Still
-nothing in `web`.
+calls `touch()`, so a live socket doesn't silently reset its own idle timer just by existing.
+
+A disconnecting seat now auto-pauses a game in progress (docs/22 §5): `TableGateway` gained
+`autoPauseOnAbsence`/`autoResumeOnReturn`, called from `onClose` and `handleBind`, which blindly
+submit dealer-core's own `request_pause`/`request_resume` — blindly, because those commands already
+reject outside `in_play`/`concluding` and reject a pause that isn't the caller's own, so the gateway
+needs no lifecycle logic of its own. Two gaps surfaced rather than papered over: `PauseState` holds
+only one seat, so a second concurrent absence can't register its own pause once the table is already
+paused; and the wire event's `reason` field reads `"requested"` rather than docs/22 §5's
+`"seat_absent"`, because dealer-core's `request_pause` carries no reason to distinguish the two.
+Neither is fixed here — both need a small dealer-core model change outside this slice.
+
+Still not built: heartbeats (docs/12 §7) — so only a *clean* socket close reaches `onClose` at all;
+an unclean network loss goes undetected without them — and the admin REST endpoints. 284 tests
+passing overall. Still nothing in `web`.

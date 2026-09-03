@@ -5,12 +5,17 @@
 //
 // Scope note: this implements binding, framing, `cseq` sequencing, `cmdId`
 // idempotency, schema validation, staleness checking, resumption,
-// byte-based backpressure tracking, and session-revocation polling
+// byte-based backpressure tracking, session-revocation polling
 // (`checkSessionRevocation`, docs/12 §4.3, backed by `AuthService.
-// isSessionActive` once auth was built). Deliberately not built: heartbeat
-// scheduling (docs/12 §7) — a real timer loop this slice doesn't add.
-// Both revocation polling and the bind deadline are exposed as callable
-// checks a real timer would drive (`checkBindDeadline`,
+// isSessionActive` once auth was built), and auto-pause on disconnection
+// (`autoPauseOnAbsence`/`autoResumeOnReturn`, docs/22 §5 — see their own
+// doc comments for the two gaps that remain even so: single-holder
+// `PauseState` and the wire `reason` field). Deliberately not built:
+// heartbeat scheduling (docs/12 §7) — a real timer loop this slice
+// doesn't add, and without it, only a *clean* socket close reaches
+// `onClose` at all; an unclean network loss goes undetected until that
+// timer exists. Revocation polling and the bind deadline are exposed as
+// callable checks a real timer would drive (`checkBindDeadline`,
 // `checkSessionRevocation`), not implemented as internal `setInterval`s,
 // so the logic stays testable with an injected clock/stub rather than
 // real elapsed time.
@@ -146,7 +151,9 @@ export class TableGateway {
 
     const onClose = (): void => {
       if (connection !== null && this.connections.get(connection.seat) === connection) {
-        this.connections.delete(connection.seat);
+        const seat = connection.seat;
+        this.connections.delete(seat);
+        this.autoPauseOnAbsence(seat);
       }
     };
 
@@ -198,7 +205,49 @@ export class TableGateway {
     };
     connection.lastDeliveredSeq = this.actor.seqNumber;
     connection.send(JSON.stringify(boundFrame));
+    this.autoResumeOnReturn(claims.seat);
     return connection;
+  }
+
+  /**
+   * Auto-pause on presence loss (docs/22_Disconnect_and_Reconnect.md §5):
+   * "the host issues the same `request_pause` [dealer-core] implements
+   * once it detects an absence" (dealer-core's own `state.ts` module
+   * comment). Blind by design — `applyRequestPause` already rejects
+   * outside `in_play`/`concluding` and while already paused, so this
+   * gateway needs no lifecycle check of its own; a rejection here is a
+   * silent no-op, not an error, since nothing asked for confirmation.
+   *
+   * Scope note: `PauseState.requestedBy` holds exactly one seat
+   * (dealer-core, Phase 2). If seat A is already auto-paused and seat B
+   * also goes absent, B's own `request_pause` is rejected — the table
+   * stays paused (already the correct externally-visible state) but B's
+   * absence is not itself recorded, so docs/22 §5.2's "if both hold, stays
+   * paused until both clear" is not fully realized. Fixing that needs a
+   * multi-holder `PauseState`, a dealer-core model change outside this
+   * gateway slice's scope.
+   *
+   * Known gap, surfaced rather than hidden: docs/22 §5 specifies
+   * `TablePaused { seat, reason: 'seat_absent' }` for this exact path, but
+   * `table/events.ts`'s `toWireEvent` hardcodes `reason: "requested"` for
+   * every `TablePaused`, because dealer-core's own `request_pause` command
+   * and event carry no reason at all — the same client command this
+   * gateway reuses for auto-pause looks identical to dealer-core either
+   * way. Distinguishing them on the wire needs a reason to travel through
+   * dealer-core's command/event types, which is its own small design
+   * question (does the *command* carry it, or does the actor override the
+   * *event* after the fact?) left to a future slice rather than decided
+   * here as a side effect.
+   */
+  private autoPauseOnAbsence(seat: Seat): void {
+    const outcome = this.actor.submit(seat, "request_pause", undefined);
+    if (outcome.ok) this.deliverNewFrames();
+  }
+
+  /** The other half of `autoPauseOnAbsence`: a seat rebinding auto-clears the pause it caused, if any — `applyRequestResume` rejects for anyone else's pause or when nothing is paused, so this is likewise safe to call unconditionally. */
+  private autoResumeOnReturn(seat: Seat): void {
+    const outcome = this.actor.submit(seat, "request_resume", undefined);
+    if (outcome.ok) this.deliverNewFrames();
   }
 
   // `cseq` and the rate limit apply to *every* frame a bound connection
