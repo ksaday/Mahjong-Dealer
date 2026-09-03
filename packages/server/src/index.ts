@@ -116,6 +116,10 @@ export type {
 export { registerTableRoutes } from "./tables/http.js";
 export type { TableRoutesOptions } from "./tables/http.js";
 
+export type { IdempotencyRepository, IdempotentResponse, NewIdempotencyRecord } from "./idempotency/repository.js";
+export { InMemoryIdempotencyRepository } from "./idempotency/memory-repository.js";
+export { PostgresIdempotencyRepository } from "./idempotency/postgres-repository.js";
+
 export type {
   AuditLogPage,
   AuditLogQuery,

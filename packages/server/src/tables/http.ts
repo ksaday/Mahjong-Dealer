@@ -6,11 +6,12 @@
 // `auth/http.ts` via `session-guard.ts` — the same double-submit check,
 // not a second implementation of it.
 //
-// Scope note: `Idempotency-Key` on `POST /tables` (docs/18 §4.1's table,
-// D-18-10) is not implemented — there is no idempotency-key store here,
-// unlike a wire command's `cmdId` (docs/13 §4), which the gateway already
-// tracks. Flagged rather than silently skipped, the same discipline
-// `auth/http.ts` applies to its own known gap.
+// `Idempotency-Key` on `POST /tables` (docs/18 §4.1's table, D-18-10) is
+// honoured via `IdempotencyRepository` (`../idempotency/`): a cache hit
+// short-circuits before the rate limiter and before `TableService`, so a
+// retry costs the client neither a create-table slot nor a second
+// resource. See that module's `repository.ts` for why the cached response
+// may hold a plaintext `join_code` despite D-18-05.
 //
 // Requires `@fastify/cookie` to already be registered on `app` for
 // `request.cookies` to exist — `auth/http.ts`'s `registerAuthRoutes`
@@ -20,11 +21,20 @@ import type { FastifyInstance } from "fastify";
 import { TokenBucket } from "../gateway/rate-limit.js";
 import type { AuthService } from "../auth/service.js";
 import { clientIp, errorBody, requireCsrf, requireSession } from "../auth/session-guard.js";
+import { InMemoryIdempotencyRepository } from "../idempotency/memory-repository.js";
+import type { IdempotencyRepository } from "../idempotency/repository.js";
 import type { TableService } from "./service.js";
+
+/** Bounds the D-18-05 exception in `../idempotency/repository.ts` — long enough to cover a client's retry, short enough that a leaked cache row is nearly worthless. */
+const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const CREATE_TABLE_ENDPOINT = "POST /tables";
+const IDEMPOTENCY_KEY_HEADER = "idempotency-key";
+const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 
 export interface TableRoutesOptions {
   readonly authService: AuthService;
   readonly tableService: TableService;
+  readonly idempotency?: IdempotencyRepository;
   /** 10/hour per account (docs/18 §6). */
   readonly createLimiterFactory?: () => TokenBucket;
   /** 10/min per account (docs/18 §6). */
@@ -37,6 +47,7 @@ export interface TableRoutesOptions {
 
 export function registerTableRoutes(app: FastifyInstance, options: TableRoutesOptions): void {
   const { authService, tableService } = options;
+  const idempotency = options.idempotency ?? new InMemoryIdempotencyRepository();
   const createLimiters = new Map<string, TokenBucket>();
   const joinAccountLimiters = new Map<string, TokenBucket>();
   const joinAddressLimiters = new Map<string, TokenBucket>();
@@ -59,6 +70,21 @@ export function registerTableRoutes(app: FastifyInstance, options: TableRoutesOp
     if (!(await requireSession(authService, request, reply))) return;
     if (!(await requireCsrf(request, reply))) return;
     const { account } = request.authSession!;
+
+    const rawKey = request.headers[IDEMPOTENCY_KEY_HEADER];
+    const idempotencyKey = typeof rawKey === "string" ? rawKey : undefined;
+    if (idempotencyKey !== undefined) {
+      if (idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+        await reply.code(400).send(errorBody("MALFORMED", "Idempotency-Key is too long."));
+        return;
+      }
+      const cached = await idempotency.find(account.id, CREATE_TABLE_ENDPOINT, idempotencyKey);
+      if (cached !== null) {
+        await reply.code(cached.status).send(cached.body);
+        return;
+      }
+    }
+
     if (!limiterFor(createLimiters, account.id, makeCreateLimiter).tryConsume()) {
       await reply.header("Retry-After", "3600").code(429).send(errorBody("RATE_LIMITED", "Too many tables created."));
       return;
@@ -68,7 +94,18 @@ export function registerTableRoutes(app: FastifyInstance, options: TableRoutesOp
       await reply.code(409).send(errorBody("ALREADY_SEATED", "You already hold a seat at a table."));
       return;
     }
-    await reply.code(201).send({ table_id: result.tableId, join_code: result.joinCode, seat: result.seat });
+    const body = { table_id: result.tableId, join_code: result.joinCode, seat: result.seat };
+    if (idempotencyKey !== undefined) {
+      await idempotency.store({
+        accountId: account.id,
+        endpoint: CREATE_TABLE_ENDPOINT,
+        key: idempotencyKey,
+        status: 201,
+        body,
+        expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+      });
+    }
+    await reply.code(201).send(body);
   });
 
   app.post("/api/v1/tables/join", async (request, reply) => {

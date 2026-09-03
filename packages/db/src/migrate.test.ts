@@ -10,10 +10,11 @@ async function migrationText(file: string): Promise<string> {
 }
 
 describe("listMigrations", () => {
-  it("lists both migrations in filename order", async () => {
+  it("lists all migrations in filename order", async () => {
     expect(await listMigrations(MIGRATIONS_DIR)).toEqual([
       "0001_initial_schema.sql",
       "0002_roles_and_grants.sql",
+      "0003_idempotency_keys.sql",
     ]);
   });
 });
@@ -134,5 +135,19 @@ describe("0002_roles_and_grants.sql — column-level denial (docs/17 §7.2, D-17
     for (const role of ["app", "app_readonly", "migrator"]) {
       expect(sql).toContain(`CREATE ROLE ${role} LOGIN`);
     }
+  });
+});
+
+describe("0003_idempotency_keys.sql — the Idempotency-Key replay cache (docs/17 §5.12, D-18-10)", () => {
+  it("creates idempotency_keys, keyed per account/endpoint/key", async () => {
+    const sql = await migrationText("0003_idempotency_keys.sql");
+    expect(sql).toMatch(/CREATE TABLE idempotency_keys \(/u);
+    expect(sql).toContain("PRIMARY KEY (account_id, endpoint, key)");
+  });
+
+  it("grants app only SELECT and INSERT — no UPDATE or DELETE, no app_readonly grant at all", async () => {
+    const sql = await migrationText("0003_idempotency_keys.sql");
+    expect(sql).toContain("GRANT SELECT, INSERT ON idempotency_keys TO app;");
+    expect(sql).not.toMatch(/GRANT[^;]*TO app_readonly/u);
   });
 });

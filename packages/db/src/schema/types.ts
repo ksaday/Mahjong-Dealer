@@ -135,3 +135,14 @@ export interface AuditLogRow {
   readonly ip: string | null;
   readonly occurred_at: Date;
 }
+
+export interface IdempotencyKeyRow {
+  readonly account_id: string;
+  readonly endpoint: string;
+  readonly key: string;
+  readonly response_status: number;
+  /** The original response body, `join_code` included where applicable — a bounded exception to D-18-05 (docs/17 §5.12). Secret for the row's short lifetime. */
+  readonly response_body: unknown;
+  readonly created_at: Date;
+  readonly expires_at: Date;
+}

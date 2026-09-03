@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 18_API_Design.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns REST conventions, the endpoint catalog, and the REST security contract. Does **not** own the WebSocket protocol (`12`, `19`), authentication mechanics (`15`), or the error code catalog in detail (`33_API/Error_Code_Catalog.md`). |
 
 ---
@@ -171,12 +171,13 @@ Security-critical limits are durable (`15 §7`). A `429` carries `Retry-After`.
 | D-18-02 | Fourteen endpoints, and the surface fits on a page | A small API is one whose authorization can be reasoned about completely. |
 | D-18-03 | `404` where existence is sensitive | `403` confirms existence; uniform `404` prevents enumeration. |
 | D-18-04 | Registration returns `201` for a duplicate email and notifies the existing address | Prevents account enumeration while still informing the real owner. |
-| D-18-05 | Join code returned exactly once, stored irreversibly | A database read yields no usable codes. |
+| D-18-05 | Join code returned exactly once, stored irreversibly | A database read yields no usable codes, with one bounded exception: `D-18-11`. |
 | D-18-06 | Server assigns the seat on join | No seat parameter anywhere (`NR-601`). |
 | D-18-07 | `GET /admin/tables` returns a seat count, not occupants | An administrator has no need for occupants, and an existing field invites extension. |
 | D-18-08 | Second factor required on every administrative endpoint | The role is small but its actions are irreversible. |
 | D-18-09 | Closed error-code catalog; clients branch on `code`, never on `message` | Messages are for humans and will change. |
-| D-18-10 | `Idempotency-Key` only where a duplicate would create a resource | Table and account creation; everywhere else the operation is naturally idempotent. |
+| D-18-10 | `Idempotency-Key` only where a duplicate would create a resource | Table and account creation; everywhere else the operation is naturally idempotent. Implemented for `POST /tables` (`17 §5.12`); `POST /accounts` remains an open gap, mitigated in the interim by `D-18-04`'s duplicate-email handling. |
+| D-18-11 | A cached `POST /tables` replay may return the plaintext `join_code` again, within a 10-minute window | The client `D-18-10` exists to serve is exactly the one that created the table but never received the code — refusing to replay it would leave that client with no path to its own resource. Bounded by `expires_at` on `idempotency_keys` (`17 §5.12`), not by convention. |
 
 ---
 
@@ -219,6 +220,7 @@ fallback would be a second privacy-relevant serialization path, and such network
 | A seat parameter is added to join | `NR-601`; `TC-I01` |
 | Join codes brute-forced | Rate limits, uniform `404`, short validity (`15 §7.2`) |
 | Error messages leak internal detail | `500` carries a correlation identifier only; codes come from a closed catalog |
+| The `idempotency_keys` replay cache outlives its purpose | 10-minute `expires_at`; no `app_readonly` grant; no endpoint ever reads it back to a human (`17 §5.12`, `D-18-11`) |
 
 ---
 
@@ -247,3 +249,4 @@ invitations as an alternative to a shared code; an operator-only capacity report
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial catalog: 14 endpoints |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `D-18-10` implemented for `POST /tables`; added `D-18-11` (the bounded join-code replay exception) and its risk |

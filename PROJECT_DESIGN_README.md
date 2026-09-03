@@ -545,9 +545,10 @@ same way rather than a second, divergent implementation of a security-critical c
 
 Not built: the live table registry's crash-recovery reconstruction from a checkpoint (docs/29) — a
 table created in an earlier process lifetime is invisible to a restarted process's `TableManager`,
-which this slice flags rather than papers over; `Idempotency-Key` on `POST /tables` (`D-18-10`); and,
-as before, `postgres-repository.ts`'s table-facing counterpart is written against the schema but not
-exercised against a live database, for the same reason the auth one isn't.
+which this slice flags rather than papers over; and, as before, `postgres-repository.ts`'s
+table-facing counterpart is written against the schema but not exercised against a live database, for
+the same reason the auth one isn't. (`Idempotency-Key` on `POST /tables`, `D-18-10`, was closed later —
+see `idempotency_keys`, `docs/17 §5.12`.)
 
 One bug worth naming here too: an early version of the `GET /tables/mine` test built `AuthService`
 and `TableService` against two *separate* `InMemoryAccountRepository` instances, so a seated guest's

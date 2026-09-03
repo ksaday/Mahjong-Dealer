@@ -5,7 +5,7 @@
 | **Project** | American Mahjong Dealer |
 | **Document** | 33_API/REST_Endpoint_Catalog.md |
 | **Status** | Normative — machine-checkable. Ch. 18 remains authoritative for conventions |
-| **Last Updated** | 2026-09-02 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the request and response schemas for every REST endpoint. Does **not** own conventions or rationale (`18`), error codes (`Error_Code_Catalog.md`), or authorization policy (`04`). |
 
 ---
@@ -114,8 +114,10 @@ Auth: session → player    Rate: 10/hour per account    Idempotency-Key honoure
 Response:  201 { "table_id": uuid, "join_code": string(6), "seat": "east"|"south"|"west"|"north" }
 Errors:    409 ALREADY_SEATED · 429 RATE_LIMITED
 ```
-`join_code` is returned **once**. It is stored irreversibly and is never returned again by any
-endpoint.
+`join_code` is returned **once** per successful creation. It is stored irreversibly and is never
+returned by any other endpoint. The sole exception is a replayed `Idempotency-Key` request within its
+10-minute window (`18 §7`, `D-18-11`; `17 §5.12`), which returns the identical response — a client
+retrying because it never received the first response is not the audience `D-18-05` protects against.
 
 ### `POST /tables/join`
 ```
@@ -243,3 +245,4 @@ Machine-checked by `TC-A10`. A registered route matching any pattern below fails
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role) | Initial catalog: 14 endpoints, 9 absence patterns |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | Noted the `Idempotency-Key` replay exception on `POST /tables`'s join-code note |

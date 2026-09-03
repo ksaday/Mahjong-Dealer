@@ -21,6 +21,7 @@ export type {
   GameOutcomeRow,
   GameRow,
   GameStateRow,
+  IdempotencyKeyRow,
   SessionRow,
   TableRow,
   TableSeatRow,

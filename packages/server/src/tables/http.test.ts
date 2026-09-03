@@ -94,6 +94,73 @@ describe("POST /api/v1/tables", () => {
     expect(second.statusCode).toBe(409);
     expect(second.json().error.code).toBe("ALREADY_SEATED");
   });
+
+  describe("Idempotency-Key (docs/18 §7 D-18-10/D-18-11, docs/17 §5.12)", () => {
+    it("replays the identical response, join_code included, for a repeated key", async () => {
+      const cookies = await registerAndLogin("penny@example.com", "Penny");
+      const headers = { ...authed(cookies), "idempotency-key": "penny-retry-1" };
+      const first = await app.inject({ method: "POST", url: "/api/v1/tables", headers });
+      const second = await app.inject({ method: "POST", url: "/api/v1/tables", headers });
+      expect(first.statusCode).toBe(201);
+      expect(second.statusCode).toBe(201);
+      expect(second.json()).toEqual(first.json());
+    });
+
+    it("does not create a second table for a replayed key", async () => {
+      const cookies = await registerAndLogin("quinn@example.com", "Quinn");
+      const headers = { ...authed(cookies), "idempotency-key": "quinn-retry-1" };
+      await app.inject({ method: "POST", url: "/api/v1/tables", headers });
+      await app.inject({ method: "POST", url: "/api/v1/tables", headers });
+      const mine = await app.inject({ method: "GET", url: "/api/v1/tables/mine", headers: authed(cookies) });
+      expect(mine.json().tables).toHaveLength(1);
+    });
+
+    it("falls through to ALREADY_SEATED for a different key from the same account", async () => {
+      const cookies = await registerAndLogin("ross@example.com", "Ross");
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/tables",
+        headers: { ...authed(cookies), "idempotency-key": "ross-first" },
+      });
+      const second = await app.inject({
+        method: "POST",
+        url: "/api/v1/tables",
+        headers: { ...authed(cookies), "idempotency-key": "ross-second" },
+      });
+      expect(second.statusCode).toBe(409);
+      expect(second.json().error.code).toBe("ALREADY_SEATED");
+    });
+
+    it("rejects an oversized key with 400 MALFORMED", async () => {
+      const cookies = await registerAndLogin("sam@example.com", "Sam");
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/tables",
+        headers: { ...authed(cookies), "idempotency-key": "x".repeat(256) },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe("MALFORMED");
+    });
+
+    it("does not scope a key across accounts", async () => {
+      const aliceCookies = await registerAndLogin("tara@example.com", "Tara");
+      const bobCookies = await registerAndLogin("umar@example.com", "Umar");
+      const key = "shared-key";
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/v1/tables",
+        headers: { ...authed(aliceCookies), "idempotency-key": key },
+      });
+      const second = await app.inject({
+        method: "POST",
+        url: "/api/v1/tables",
+        headers: { ...authed(bobCookies), "idempotency-key": key },
+      });
+      expect(first.statusCode).toBe(201);
+      expect(second.statusCode).toBe(201);
+      expect(second.json().table_id).not.toBe(first.json().table_id);
+    });
+  });
 });
 
 describe("POST /api/v1/tables/join", () => {

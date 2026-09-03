@@ -4,15 +4,15 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 17_Database_Design.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the physical schema: tables, columns, constraints, indexes, encryption, and privileges. Does **not** own what data exists or why (`16`), the privacy classification (`14`), or migration operations (`27`). |
 
 ---
 
 ## 1. Executive Summary
 
-The schema is small — eleven tables — and its smallness is the most informative thing about it. There
+The schema is small — twelve tables — and its smallness is the most informative thing about it. There
 are no accounts, balances, ledgers, postings, prices, purchases, or transactions, because there is no
 economy (`ADR-0003`). There are no rule versions, rule configurations, or validation runs, because
 there are no rules (`ADR-0002`). There is no event stream containing concealed actions, because
@@ -59,6 +59,7 @@ erDiagram
     accounts ||--o{ connect_tickets : has
     accounts ||--o{ table_seats : occupies
     accounts ||--o{ audit_log : "acted in"
+    accounts ||--o{ idempotency_keys : caches
     tables ||--|{ table_seats : has
     tables ||--o{ games : hosts
     games ||--o| checkpoints : "latest"
@@ -67,7 +68,7 @@ erDiagram
     games ||--o{ command_receipts : records
 ```
 
-Eleven tables. `tables ||--|{ table_seats` is a non-optional four: a table always has exactly four
+Twelve tables. `tables ||--|{ table_seats` is a non-optional four: a table always has exactly four
 seat rows, occupied or not.
 
 ---
@@ -256,6 +257,32 @@ Idempotency receipts (`13 §4`). Cascade-deleted with the game.
 Append-only by trigger. Authentication and administrative events only. **No game content, ever** — an
 audit log that recorded gameplay would be a permanent concealed-material store (`16 §10`).
 
+### 5.12 `idempotency_keys`
+
+| Column | Type | Notes | Class |
+|---|---|---|---|
+| `account_id` | uuid FK | cascade delete | |
+| `endpoint` | text | e.g. `"POST /tables"` — scopes a key to the request it replays | |
+| `key` | text | The client-supplied `Idempotency-Key` header value | |
+| `response_status` | smallint | | |
+| `response_body` | jsonb | The original response, verbatim | **Secret** |
+| `created_at`, `expires_at` | timestamptz | 10 minutes from creation | |
+
+`PRIMARY KEY (account_id, endpoint, key)`. The replay cache behind `Idempotency-Key`
+(`18 §3`, `D-18-10`) — currently written only by `POST /tables`.
+
+`response_body` is classified **Secret** despite holding nothing more sensitive than what the client
+already received once, because for `POST /tables` it includes the plaintext `join_code` — a
+deliberate, narrow exception to `D-18-05`/`D-17-07`'s "stored irreversibly." Without it, a client that
+created a table but never received the response (a dropped connection, a client crash before the body
+was read) has no path to recover a code it already earned; retrying without `Idempotency-Key` only
+gets `409 ALREADY_SEATED`, since the account already holds the seat. The exception is bounded by
+`expires_at`, not by convention: an expired row is invisible to every lookup, and no endpoint or
+administrative surface reads this table back to a human — it exists solely to answer "have I seen
+this key" for the ten minutes that matters. No `app_readonly` grant, the same posture `connect_tickets`
+takes for its own single-use secret. Rows are not swept by a scheduled job; lookups simply treat an
+expired row as absent, the same lazy-expiry discipline `connect_tickets` already uses.
+
 ---
 
 ## 6. Constraints that carry design weight
@@ -272,6 +299,7 @@ otherwise would.
 | `unique (ticket_hash)` | `connect_tickets` | Single-use tickets |
 | `unique (game_id, seq)` | `game_events` | No duplicate sequence in the log |
 | `primary key (game_id, cmd_id)` | `command_receipts` | Exactly-once command application |
+| `primary key (account_id, endpoint, key)` | `idempotency_keys` | One cached response per account, per endpoint, per key |
 | Append-only triggers | `game_events`, `audit_log` | Records cannot be rewritten |
 
 Each replaces application logic that would be subject to a race.
@@ -297,7 +325,7 @@ existing rows. A production start fails if the key is absent or a development de
 
 | Role | Grants |
 |---|---|
-| `app` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all tables **except no `SELECT` on either `private_state` column** — obtained through a dedicated decryption path |
+| `app` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all tables **except no `SELECT` on either `private_state` column** — obtained through a dedicated decryption path — **and `idempotency_keys`, `SELECT`/`INSERT` only**: a row is never updated and is never explicitly deleted, only aged out (`§5.12`) |
 | `app_readonly` | `SELECT` on public tables only; **no grant on `private_state`, `password_hash`, `token_hash`, `csrf_secret`** |
 | `migrator` | DDL; used only by migrations |
 
@@ -354,6 +382,7 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | D-17-10 | `game_outcome` as an enumeration with no value column | There is nowhere for a score to live, which is stronger than not writing one. |
 | D-17-11 | Correction checkpoints bounded by deletion on write | The window is bounded by construction, not by a scheduled job that could fail. |
 | D-17-12 | UUIDv7 primary keys | Time-ordered index locality without exposing sequential identifiers. |
+| D-17-13 | `idempotency_keys` caches a full response, not just a fact-of-completion flag | A client retrying `POST /tables` after a lost response needs the identical body back, `join_code` included (`18 §7`, `D-18-11`) — a completion flag alone would tell it the create succeeded but not what it needs to act on it. |
 
 ---
 
@@ -370,6 +399,8 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | Storing join codes reversibly | A database read would yield working codes for live tables. |
 | Sequential integer keys | Expose creation order and enable enumeration. |
 | A separate schema per table (multi-tenancy) | Enormous complexity for four-player private tables. |
+| A fact-of-completion flag instead of a cached response for `Idempotency-Key` | Doesn't solve the problem: a client with a lost response still can't recover its `join_code` (`D-17-13`). |
+| No TTL — rely on the caller to delete its own key | A client that never retries leaves the row forever; an unconditional short TTL needs no cooperation. |
 
 ---
 
@@ -378,8 +409,11 @@ The absences are as normative as the tables, and each is enforced by a negative 
 **Column-level denial means the decryption path is slightly awkward** — it needs a distinct
 connection or role. Accepted: that awkwardness is the control.
 
-**Eleven tables is fewer than a reviewer might expect.** Accepted, and `§8` exists so the absences
+**Twelve tables is fewer than a reviewer might expect.** Accepted, and `§8` exists so the absences
 read as decisions rather than as omissions.
+
+**`idempotency_keys.response_body` is a deliberate, narrow hole in `D-17-07`.** Accepted, bounded by
+a 10-minute `expires_at` rather than by convention — see `§5.12`.
 
 **Application-layer encryption means the database cannot index or query private state.** Accepted:
 nothing queries it. It is read whole, by one path, at actor start.
@@ -398,6 +432,7 @@ nothing queries it. It is read whole, by one path, at actor start.
 | The encryption key is lost | Versioned keys in the secret manager; loss affects only live games |
 | A migration weakens a constraint | Migrations are reviewed against `§6`; the constraint list is part of the definition of done |
 | `app_readonly` is granted more than intended | Grants asserted in a schema test |
+| A cached join code in `idempotency_keys` outlives its purpose | 10-minute `expires_at`; no `app_readonly` grant; nothing reads the table back to a human (`§5.12`) |
 
 ---
 
@@ -427,3 +462,4 @@ analysis.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial schema: 11 tables |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `idempotency_keys` (`§5.12`) for `D-18-10`; twelve tables; `D-17-13` |
