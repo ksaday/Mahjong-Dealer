@@ -10,14 +10,30 @@
 // (docs/33_API §5, `admin/`) are in place, now including the TOTP second
 // factor docs/15 §8.1 requires on top of an administrator's session
 // (`ADR-0017`: `auth/totp.ts`, `POST /sessions/mfa`, `requireAdmin`'s
-// `mfa_verified_at` check). Enrollment is out-of-band by design — there
-// is no enrollment endpoint — via `NewAccount.totpSecret`; a standalone
-// provisioning script that calls it does not exist yet (docs/28 §3.1
-// specifies the procedure). Not built: the live table registry's
-// crash-recovery reconstruction from a checkpoint (see tables/manager.ts's
-// module comment). See
-// table/actor.ts, gateway/gateway.ts, auth/service.ts, admin/service.ts,
-// and tables/service.ts's module comments for scope detail.
+// `mfa_verified_at` check).
+//
+// Phase 7's operational-readiness slice: `bootstrap/app.ts`'s `buildApp`
+// wires every module above into one dependency-injected Fastify app
+// (security headers, CORS, and `GET /healthz` included — docs/15 §6,
+// docs/27 §3.2), `bootstrap/config.ts`'s `loadConfig` enforces NFR-044 at
+// startup rather than lazily, and `main.ts` (not exported here — a real
+// I/O entrypoint, not library surface) is the runnable process that was
+// previously entirely missing: no `.listen()` call existed anywhere.
+// `scripts/provision-admin.ts` is the docs/28 §3.1 provisioning script —
+// `provisionAdministrator()` (`auth/provisioning.ts`) was pure and tested
+// but had no real wrapper until now; `packages/db/src/cli.ts` is the
+// equivalent for `migrate()`.
+//
+// Still not built: checkpoint persistence to PostgreSQL (the
+// `checkpoints`/`correction_checkpoints` tables have no repository or
+// write path anywhere — docs/29's disaster-recovery objectives, a full
+// subsystem, not a wiring gap; `gateway.ts`'s `notifyShuttingDown` flags
+// where this bites graceful shutdown specifically) and the live table
+// registry's crash-recovery reconstruction from a checkpoint (see
+// tables/manager.ts's module comment — the same missing subsystem is why
+// this can't be built either). See table/actor.ts, gateway/gateway.ts,
+// auth/service.ts, admin/service.ts, and tables/service.ts's module
+// comments for further scope detail.
 
 export type { ActorFrame, ActorSnapshot, SubmitOutcome, TableActorOptions } from "./table/actor.js";
 export { TableActor } from "./table/actor.js";
@@ -161,3 +177,17 @@ export type {
 } from "./admin/service.js";
 export { registerAdminRoutes } from "./admin/http.js";
 export type { AdminRoutesOptions } from "./admin/http.js";
+
+export { buildApp } from "./bootstrap/app.js";
+export type { BuildAppOptions, BuiltApp } from "./bootstrap/app.js";
+export { loadConfig } from "./bootstrap/config.js";
+export type { ServerConfig } from "./bootstrap/config.js";
+
+export { applySecurityHeaders } from "./http/security-headers.js";
+export { applyCors } from "./http/cors.js";
+
+export { registerReadinessRoute } from "./health/readiness.js";
+export type { ReadinessResult, ReadinessRouteOptions } from "./health/readiness.js";
+
+export { runProvisionAdmin } from "./scripts/provision-admin.js";
+export type { ProvisionAdminDeps } from "./scripts/provision-admin.js";

@@ -6,6 +6,9 @@
 export { migrate, listMigrations } from "./migrate.js";
 export type { MigrateOptions } from "./migrate.js";
 
+export { runMigrateCli } from "./cli.js";
+export type { MigrateCliDeps } from "./cli.js";
+
 export { uuidv7 } from "./ids.js";
 
 export type {

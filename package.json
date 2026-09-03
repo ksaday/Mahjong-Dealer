@@ -13,7 +13,10 @@
     "typecheck": "pnpm -r --filter=./packages/* run typecheck",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "start": "pnpm --filter @mahjong-dealer/server run start",
+    "db:migrate": "pnpm --filter @mahjong-dealer/db run migrate",
+    "provision:admin": "pnpm --filter @mahjong-dealer/server run provision:admin"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "8.69.0",

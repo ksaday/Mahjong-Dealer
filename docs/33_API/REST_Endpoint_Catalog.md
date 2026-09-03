@@ -12,7 +12,7 @@
 
 ## 1. The route inventory is closed
 
-The twenty endpoints below are the **complete** REST surface. A registered route not listed here
+The twenty-one endpoints below are the **complete** REST surface. A registered route not listed here
 fails `TC-A10`.
 
 Closing the inventory matters because the surface's most important property is what it lacks: no
@@ -240,7 +240,24 @@ Authentication and administrative events only. **No game content, ever** (`17 §
 
 ---
 
-## 6. Absent routes
+## 6. Operational
+
+### `GET /healthz`
+
+Deliberately outside `/api/v1` and unauthenticated — the container orchestrator's readiness probe
+(`27_Deployment_Architecture.md §3.2`), which cannot hold a session cookie or complete the
+administrator second factor, so it cannot be `GET /admin/health` (`§5`, above) under a different
+path. Reports only reachability and a schema filename — never operational metrics, and never
+player-identifying or tile data.
+
+```
+Response:  200 { "status": "ok", "database": "ok", "schema_version": string } |
+           503 { "status": "degraded", "database": "unreachable", "schema_version": string|null }
+```
+
+---
+
+## 7. Absent routes
 
 Machine-checked by `TC-A10`. A registered route matching any pattern below fails the build.
 
@@ -258,12 +275,12 @@ Machine-checked by `TC-A10`. A registered route matching any pattern below fails
 
 ---
 
-## 7. Cross References
+## 8. Cross References
 
 `18_API_Design.md` · `Error_Code_Catalog.md` · `Wire_Protocol_Contract.md` ·
 `04_User_Roles_and_Access.md §4` · `15_Security_Architecture.md`
 
-## 8. Revision History
+## 9. Revision History
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
@@ -271,3 +288,4 @@ Machine-checked by `TC-A10`. A registered route matching any pattern below fails
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | Noted the `Idempotency-Key` replay exception on `POST /tables`'s join-code note |
 | 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `429 RATE_LIMITED` to `POST /accounts/me/password`'s error list, now that its durable limit is implemented |
 | 0.4 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: added `POST /sessions/mfa`; `mfa_required` on `POST /sessions`; corrected the route count from 14 to 20 (`§1`) |
+| 0.5 | 2026-09-03 | Design (architect role), owner-approved | Added `GET /healthz` (new `§6 Operational`) — the container readiness probe `27 §3.2` requires, previously unbuilt and unpathed; corrected the route count from 20 to 21 (`§1`); renumbered old `§6`–`§8` to `§7`–`§9` |

@@ -515,3 +515,40 @@ describe("forceClose (docs/18 §4.3 POST /admin/tables/{id}/force-close, FR-161)
     expect(gateway.connectionCount()).toBe(2);
   });
 });
+
+describe("notifyShuttingDown (docs/21 §7 graceful shutdown, docs/19's service_restarting notice)", () => {
+  it("sends a service_restarting notice to every bound connection", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+    const south = bindSeat(gateway, tickets, "south");
+
+    gateway.notifyShuttingDown();
+
+    for (const seat of [east, south]) {
+      const notices = seat.socket.framesOfType("notice");
+      expect(notices).toEqual([{ t: "notice", kind: "service_restarting", d: {} }]);
+    }
+  });
+
+  it("closes every bound connection with 1012 SERVICE_RESTART", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+
+    gateway.notifyShuttingDown();
+
+    expect(east.socket.closes).toEqual([{ code: 1012, reason: "SERVICE_RESTART" }]);
+  });
+
+  it("clears the connection registry so a stale connection isn't double-notified", () => {
+    const { tickets, gateway } = setUp();
+    bindSeat(gateway, tickets, "east");
+
+    gateway.notifyShuttingDown();
+    expect(gateway.connectionCount()).toBe(0);
+  });
+
+  it("is a no-op with no bound connections", () => {
+    const { gateway } = setUp();
+    expect(() => gateway.notifyShuttingDown()).not.toThrow();
+  });
+});

@@ -55,6 +55,13 @@ export class TableManager {
     return this.live.values();
   }
 
+  /** Graceful shutdown (docs/21 §7): `notifyShuttingDown`s every live table's gateway. `main.ts` calls this on `SIGTERM`, ahead of closing the HTTP server itself. */
+  shutdownAll(): void {
+    for (const live of this.live.values()) {
+      live.gateway.notifyShuttingDown();
+    }
+  }
+
   /**
    * Resolves an unredeemed connect ticket to the table it belongs to,
    * without redeeming it — the multi-table router

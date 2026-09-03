@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 27_Deployment_Architecture.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the production topology, environments, configuration isolation, the delivery pipeline, and the multi-node seam. Does **not** own operational procedures (`28`), disaster recovery (`29`), or the security controls themselves (`15`). |
 
 ---
@@ -62,8 +62,8 @@ flowchart TB
 
 Splitting REST from the socket gateway is the obvious first decomposition and is not taken, because
 table actors must live with the gateway that serves their connections, and the REST surface is
-fourteen endpoints (`18`). Splitting would produce a substantial service and a trivial one, plus a
-network hop for the ticket handshake.
+twenty-one endpoints (`18`, `33_API/REST_Endpoint_Catalog.md §1`). Splitting would produce a
+substantial service and a trivial one, plus a network hop for the ticket handshake.
 
 ### 3.2 Container
 
@@ -73,7 +73,7 @@ network hop for the ticket handshake.
 | User | Non-root |
 | Filesystem | Read-only, with an explicit writable temporary mount |
 | Capabilities | All dropped |
-| Health | A readiness endpoint reporting database reachability and schema version |
+| Health | `GET /healthz` — unauthenticated, outside `/api/v1`; reports database reachability and schema version (`33_API/REST_Endpoint_Catalog.md §6`). Distinct from `GET /admin/health` (`18 §4.3`, `FR-162`), which requires an administrator session and reports operational metrics an orchestrator probe cannot authenticate to reach |
 | Signals | `SIGTERM` initiates graceful shutdown (`21 §7`) |
 
 Graceful shutdown handling is the property that makes a deploy lossless: checkpoints flush
@@ -310,3 +310,4 @@ operational queries; provenance verification enforced at deploy time.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial chapter |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `§3.2`: named `GET /healthz` as the concrete readiness-endpoint path (previously unbuilt and unpathed), distinguished from `GET /admin/health`; `§3.1`: corrected the stale route count from fourteen to twenty-one |

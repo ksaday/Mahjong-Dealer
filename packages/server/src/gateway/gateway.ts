@@ -126,6 +126,30 @@ export class TableGateway {
   }
 
   /**
+   * Graceful shutdown (docs/21_Error_Handling_and_Recovery.md §7,
+   * docs/19_WebSocket_Event_Catalog.md's `service_restarting` notice and
+   * `1012 SERVICE_RESTART` close code): tells every connected seat a
+   * planned restart is imminent, then closes its socket so the client's
+   * own reconnect-with-jitter logic (docs/21 §7) takes over. `main.ts`
+   * calls this, via `TableManager.shutdownAll`, on `SIGTERM`.
+   *
+   * Deliberately does **not** flush a checkpoint first — docs/21 §7 also
+   * specifies "flush every checkpoint synchronously" as part of this same
+   * step, but no checkpoint-persistence subsystem exists yet anywhere in
+   * this codebase (the `checkpoints` table has no repository or write
+   * path — a real, separate gap, not decided here). A planned restart
+   * today loses whatever a process restart already loses.
+   */
+  notifyShuttingDown(): void {
+    const notice: ServerFrame = { t: "notice", kind: "service_restarting", d: {} };
+    for (const connection of this.connections.values()) {
+      connection.send(JSON.stringify(notice));
+      connection.close(1012, "SERVICE_RESTART");
+    }
+    this.connections.clear();
+  }
+
+  /**
    * A real timer should call this periodically (docs/12 §4.3): closes,
    * with `4004`, any bound connection whose session has since been
    * revoked or expired — "log out everywhere" must close an open table
