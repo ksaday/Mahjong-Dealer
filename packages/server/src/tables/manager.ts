@@ -81,12 +81,15 @@ export class TableManager {
         const table = await buildTableFromRepository(row, seatRows, deps.accounts);
 
         const latestGame = await deps.games.findLatestForTable(row.id);
-        const game =
-          latestGame === null || latestGame.purged_at !== null
-            ? null
-            : await deps.checkpointWriter.readGameState(latestGame.id);
+        let game: Awaited<ReturnType<CheckpointWriter["readGameState"]>> = null;
+        let correctionHistory: Awaited<ReturnType<CheckpointWriter["readCorrectionHistory"]>> = [];
+        if (latestGame !== null && latestGame.purged_at === null) {
+          game = await deps.checkpointWriter.readGameState(latestGame.id);
+          // Only when a game was actually found — an idle/never-started table has no correction window either (D-17-19).
+          correctionHistory = await deps.checkpointWriter.readCorrectionHistory(latestGame.id);
+        }
 
-        const actor = TableActor.fromRestoredParts({ id: row.id, entropy: this.entropy }, table, game);
+        const actor = TableActor.fromRestoredParts({ id: row.id, entropy: this.entropy }, table, game, correctionHistory);
         this.register(row.id, actor);
       } catch (error) {
         onError(row.id, error);

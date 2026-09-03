@@ -18,20 +18,42 @@
 // in the checkpoint." That is a separate, pre-existing gap this session
 // does not close — durable cmdId dedup across a restart still doesn't
 // exist (only the gateway's in-memory ack cache does).
-import type { GameOutcome } from "@mahjong-dealer/dealer-core";
+//
+// Correction-checkpoint durability (docs/17 §5.8, D-17-19) reuses this same
+// class rather than a second injected one, since it shares the encryption
+// key, the error-handling convention, and the purge lifecycle. Its private
+// envelope is deliberately smaller than the primary checkpoint's: just
+// `{ actorSeq, gameStateBytes }`, not a full `ActorSnapshot` — the
+// correction window only ever needs to reconstruct a `GameState` keyed by
+// the actor's own wire-seq (`table/checkpoints.ts`'s `CheckpointHistory`),
+// never `table` or `gameId`, both of which the primary envelope carries for
+// crash recovery's different purpose.
+import { checkpoint as coreCheckpoint, type GameOutcome } from "@mahjong-dealer/dealer-core";
 import type { GameOutcomeRow } from "@mahjong-dealer/db";
+import { uuidv7 } from "@mahjong-dealer/db";
 import type { Seat } from "@mahjong-dealer/shared";
 import type { TableActor, ActorSnapshot } from "../table/actor.js";
+import type { CheckpointEntry } from "../table/checkpoints.js";
 import { CURRENT_KEY_VERSION, decryptCheckpoint, encryptCheckpoint } from "./checkpoint-encryption.js";
 import { publicCheckpointSummary } from "./public-projection.js";
 import type { CheckpointRepository } from "./repository.js";
+import type { CorrectionCheckpointRepository } from "./correction-repository.js";
 import type { GamesRepository } from "../tables/games-repository.js";
+
+/** docs/17 §5.8 / `D-05-06` — the correction window's bound. Hardcoded rather than threaded from `TableActorOptions.correctionWindow`: only tests override that option today, and none combine a non-default window with a real `CheckpointWriter`. If that combination is ever needed, the DB-durable window and the in-memory window could silently disagree after a restart. */
+const CORRECTION_CHECKPOINT_RETENTION = 10;
+
+interface CorrectionCheckpointEnvelope {
+  readonly actorSeq: number;
+  readonly gameStateBytes: string;
+}
 
 export class CheckpointWriter {
   constructor(
     private readonly checkpoints: CheckpointRepository,
     private readonly games: GamesRepository,
     private readonly encryptionKey: Buffer,
+    private readonly correctionCheckpoints: CorrectionCheckpointRepository,
     /** Errors are logged, never thrown from the async path (D-21-05: "a checkpoint failure does not interrupt play"). */
     private readonly onWriteError: (error: unknown) => void = (error) => console.error("checkpoint write failed", error),
   ) {}
@@ -61,9 +83,10 @@ export class CheckpointWriter {
     await this.games.recordSeq(gameId, actor.gameStateSnapshot.seq);
   }
 
-  /** docs/17 §7.3's purge steps, minus zeroing in-memory state — dealer-core's own `concluded` lifecycle and `TableActor.forceClose` already do that. */
+  /** docs/17 §7.3's purge steps, minus zeroing in-memory state — dealer-core's own `concluded` lifecycle and `TableActor.forceClose` already do that. Also satisfies docs/16 §5.5's "delete every correction-window checkpoint" step (`D-17-19`). */
   async purge(gameId: string): Promise<void> {
     await this.checkpoints.deleteForGame(gameId);
+    await this.correctionCheckpoints.deleteForGame(gameId);
     await this.games.markPurged(gameId);
   }
 
@@ -109,6 +132,56 @@ export class CheckpointWriter {
     const plaintext = decryptCheckpoint(row.privateState, this.encryptionKey);
     const snapshot = JSON.parse(plaintext.toString("utf8")) as ActorSnapshot;
     return { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId };
+  }
+
+  /** Fire-and-forget — off the acknowledgement path (NFR-032, docs/16 §5.3), same as `writeAsync`. `entry` is `TableActor.latestCorrectionCheckpoint` — the caller (`TableGateway.syncCheckpoint`) is responsible for only calling this when that entry is actually new. */
+  writeCorrectionCheckpointAsync(actor: TableActor, entry: CheckpointEntry): void {
+    void this.flushCorrectionCheckpointSync(actor, entry).catch(this.onWriteError);
+  }
+
+  async flushCorrectionCheckpointSync(actor: TableActor, entry: CheckpointEntry): Promise<void> {
+    const gameId = actor.currentGameId;
+    if (gameId === null) return; // idle/concluded: nothing live to checkpoint
+
+    const envelope: CorrectionCheckpointEnvelope = { actorSeq: entry.seq, gameStateBytes: coreCheckpoint(entry.gameState) };
+    const plaintext = Buffer.from(JSON.stringify(envelope), "utf8");
+    const privateState = encryptCheckpoint(plaintext, this.encryptionKey);
+    const publicState = publicCheckpointSummary(entry.gameState);
+
+    await this.correctionCheckpoints.record(
+      { id: uuidv7(), gameId, seq: entry.gameState.seq, publicState, privateState, keyVersion: CURRENT_KEY_VERSION },
+      CORRECTION_CHECKPOINT_RETENTION,
+    );
+  }
+
+  /**
+   * The correction-window equivalent of `readGameState`: up to
+   * `CORRECTION_CHECKPOINT_RETENTION` rows, ascending by the actor's own
+   * wire-seq, ready to replay straight into a fresh `CheckpointHistory` via
+   * `TableActor.fromRestoredParts`'s `correctionHistory` parameter.
+   *
+   * Unlike `readGameState`, a single bad row does not fail the whole call:
+   * the correction window is a convenience (whether a rewind is possible),
+   * not correctness-critical the way the primary checkpoint's game state
+   * is, and losing one entry degrades to exactly what happened before this
+   * durability existed — an emptier window, never a wrong one (`D-21-05`'s
+   * "a checkpoint failure does not interrupt play", extended to restore).
+   */
+  async readCorrectionHistory(gameId: string): Promise<readonly CorrectionCheckpointEnvelope[]> {
+    const rows = await this.correctionCheckpoints.readForRestore(gameId, CORRECTION_CHECKPOINT_RETENTION);
+    const entries: CorrectionCheckpointEnvelope[] = [];
+    for (const row of rows) {
+      try {
+        if (row.keyVersion !== CURRENT_KEY_VERSION) {
+          throw new Error(`correction checkpoint for game ${gameId} was written under key version ${row.keyVersion}, no rotation path exists`);
+        }
+        const plaintext = decryptCheckpoint(row.privateState, this.encryptionKey);
+        entries.push(JSON.parse(plaintext.toString("utf8")) as CorrectionCheckpointEnvelope);
+      } catch (error) {
+        this.onWriteError(error);
+      }
+    }
+    return entries;
   }
 }
 

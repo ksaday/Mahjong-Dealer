@@ -289,4 +289,47 @@ describe("TableActor.fromRestoredParts (docs/29_Disaster_Recovery.md, process-re
     expect(actor.seqNumber).toBe(harness.seqNumber());
     expect(actor.currentGameId).toBe(snapshot.gameId);
   });
+
+  it("replays correctionHistory into a fresh CheckpointHistory, oldest first, so a pre-restart target is still reachable (docs/17 §5.8, D-17-19)", () => {
+    const harness = TableHarness.create({ seed: 6 });
+    readyAllAndDeal(harness);
+    const dealEntry = harness.actorForTest().latestCorrectionCheckpoint;
+    if (dealEntry === null) throw new Error("unreachable");
+    const dealBytes = harness.actorForTest().checkpointBytes();
+
+    harness.seat("east").send("draw_tile", { end: "head" });
+    const drawEntry = harness.actorForTest().latestCorrectionCheckpoint;
+    if (drawEntry === null) throw new Error("unreachable");
+    const snapshot = harness.snapshotForTest(); // current state, post-draw
+
+    const actor = TableActor.fromRestoredParts(
+      { id: "harness-table", entropy: createDeterministicEntropy(6) },
+      harness.table(),
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId },
+      [
+        { actorSeq: dealEntry.seq, gameStateBytes: dealBytes },
+        { actorSeq: drawEntry.seq, gameStateBytes: snapshot.gameStateBytes },
+      ],
+    );
+
+    expect(actor.latestCorrectionCheckpoint?.seq).toBe(drawEntry.seq);
+    const outcome = actor.submit("south", "propose_correction", { rewindTo: dealEntry.seq });
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("defaults correctionHistory to empty — a restored table has no rewindable window until new entries accumulate", () => {
+    const harness = TableHarness.create({ seed: 7 });
+    readyAllAndDeal(harness);
+    const snapshot = harness.snapshotForTest();
+
+    const actor = TableActor.fromRestoredParts(
+      { id: "harness-table", entropy: createDeterministicEntropy(7) },
+      harness.table(),
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId },
+    );
+
+    expect(actor.latestCorrectionCheckpoint).toBeNull();
+    const rejected = actor.submit("south", "propose_correction", { rewindTo: snapshot.seq });
+    expect(rejected).toEqual({ ok: false, code: "NO_CHECKPOINT" });
+  });
 });

@@ -13,11 +13,13 @@
 // delegate to. Every other file this session touched keeps exactly this
 // split; this is the one place that can't.
 //
-// Two pools, deliberately (docs/17 §7.2, D-17-18): `pool` connects as the
-// general `app` role; `checkpointReadPool` connects as
-// `app_checkpoint_reader` (migration `0006`), the only role granted SELECT
-// on `checkpoints.private_state` at all — used exclusively by
-// `PostgresCheckpointRepository.readForRestore`.
+// Two pools, deliberately (docs/17 §7.2, D-17-18/D-17-19): `pool` connects
+// as the general `app` role; `checkpointReadPool` connects as
+// `app_checkpoint_reader` (migrations `0006`/`0007`), the only role granted
+// SELECT on either `private_state` column — shared by both
+// `PostgresCheckpointRepository.readForRestore` and
+// `PostgresCorrectionCheckpointRepository.readForRestore`, since it's the
+// same role/data class reading a second table, not a second role.
 //
 // This machine's only Postgres instance belongs to a different, unrelated
 // project and must not be touched — so this file, like every
@@ -27,6 +29,7 @@ import { Pool } from "pg";
 import { PostgresAccountRepository, PostgresSessionRepository } from "./auth/postgres-repository.js";
 import { PostgresAuditLogRepository } from "./audit/postgres-repository.js";
 import { PostgresCheckpointRepository } from "./checkpoint/postgres-repository.js";
+import { PostgresCorrectionCheckpointRepository } from "./checkpoint/correction-postgres-repository.js";
 import { CheckpointWriter } from "./checkpoint/writer.js";
 import { buildApp } from "./bootstrap/app.js";
 import { loadConfig } from "./bootstrap/config.js";
@@ -54,7 +57,8 @@ async function main(): Promise<void> {
   const tables = new PostgresTableRepository(pool);
   const games = new PostgresGamesRepository(pool);
   const checkpoints = new PostgresCheckpointRepository(pool, checkpointReadPool);
-  const checkpointWriter = new CheckpointWriter(checkpoints, games, config.checkpointEncryptionKey);
+  const correctionCheckpoints = new PostgresCorrectionCheckpointRepository(pool, checkpointReadPool);
+  const checkpointWriter = new CheckpointWriter(checkpoints, games, config.checkpointEncryptionKey, correctionCheckpoints);
 
   const { app, manager } = buildApp({
     accounts,

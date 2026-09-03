@@ -301,7 +301,7 @@ export class TableGateway {
     const outcome = this.actor.submit(seat, "request_pause", undefined, "seat_absent");
     if (outcome.ok) {
       this.deliverNewFrames();
-      this.syncCheckpoint(beforeGameId);
+      this.syncCheckpoint(beforeGameId, outcome.seq);
     }
   }
 
@@ -311,7 +311,7 @@ export class TableGateway {
     const outcome = this.actor.submit(seat, "request_resume", undefined);
     if (outcome.ok) {
       this.deliverNewFrames();
-      this.syncCheckpoint(beforeGameId);
+      this.syncCheckpoint(beforeGameId, outcome.seq);
     }
   }
 
@@ -449,7 +449,7 @@ export class TableGateway {
     connection.send(JSON.stringify(ackFrame));
     this.receipts.set(cmdId, { seat: connection.seat, frame: ackFrame });
     this.deliverNewFrames();
-    this.syncCheckpoint(beforeGameId);
+    this.syncCheckpoint(beforeGameId, outcome.seq);
   }
 
   /**
@@ -462,12 +462,16 @@ export class TableGateway {
    * row exist before the checkpoint referencing it — via `game_id`'s FK —
    * is written, so that one path awaits `startGame` first.
    */
-  private syncCheckpoint(beforeGameId: string | null): void {
+  private syncCheckpoint(beforeGameId: string | null, seq: number): void {
     const writer = this.checkpointWriter;
     if (writer === undefined) return;
 
     const state = this.actor.gameStateSnapshot;
     if (state.lifecycle === "concluded") {
+      // `concludeAndPurge` -> `purge` already deletes every correction-window
+      // row for this game (docs/16 §5.5, D-17-19), and a concluded game never
+      // records a new correction entry, so no correction-checkpoint write
+      // belongs on this branch.
       void writer.concludeAndPurge(this.actor).catch(this.onCheckpointError);
       return;
     }
@@ -479,10 +483,26 @@ export class TableGateway {
       void writer
         .startGame(afterGameId, this.actor.tableSnapshot.id)
         .then(() => writer.flushSync(this.actor))
+        .then(() => this.persistCorrectionCheckpoint(writer, seq))
         .catch(this.onCheckpointError);
       return;
     }
     writer.writeAsync(this.actor);
+    this.persistCorrectionCheckpoint(writer, seq);
+  }
+
+  /**
+   * Only when the just-accepted command actually added a new
+   * correction-window entry (`TableActor.latestCorrectionCheckpoint.seq`
+   * equal to the outcome's own `seq` — `set_ready`/`clear_ready`/
+   * `close_table` never do) — avoids a wasted or duplicate write on every
+   * other accepted command (docs/17 §5.8, D-17-19).
+   */
+  private persistCorrectionCheckpoint(writer: CheckpointWriter, seq: number): void {
+    const latest = this.actor.latestCorrectionCheckpoint;
+    if (latest !== null && latest.seq === seq) {
+      writer.writeCorrectionCheckpointAsync(this.actor, latest);
+    }
   }
 
   private readonly onCheckpointError = (error: unknown): void => {

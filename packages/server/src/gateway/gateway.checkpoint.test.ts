@@ -9,6 +9,7 @@ import { createDeterministicEntropy } from "../testing/deterministic-entropy.js"
 import { MockSocket } from "../testing/mock-socket.js";
 import { TableActor } from "../table/actor.js";
 import { InMemoryCheckpointRepository } from "../checkpoint/memory-repository.js";
+import { InMemoryCorrectionCheckpointRepository } from "../checkpoint/correction-memory-repository.js";
 import { InMemoryGamesRepository } from "../tables/memory-games-repository.js";
 import { CheckpointWriter } from "../checkpoint/writer.js";
 import { type ConnectionHandle, TableGateway } from "./gateway.js";
@@ -34,8 +35,9 @@ async function flush(): Promise<void> {
 
 function setUp() {
   const checkpoints = new InMemoryCheckpointRepository();
+  const correctionCheckpoints = new InMemoryCorrectionCheckpointRepository();
   const games = new InMemoryGamesRepository();
-  const checkpointWriter = new CheckpointWriter(checkpoints, games, randomBytes(32));
+  const checkpointWriter = new CheckpointWriter(checkpoints, games, randomBytes(32), correctionCheckpoints);
   const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
   const tickets = new TicketStore();
   const gateway = new TableGateway({ actor, tickets, checkpointWriter });
@@ -43,7 +45,7 @@ function setUp() {
     const result = actor.occupySeat(`player-${seat}`, seat);
     if (!result.ok) throw new Error("unreachable");
   }
-  return { actor, tickets, gateway, checkpoints, games, checkpointWriter };
+  return { actor, tickets, gateway, checkpoints, correctionCheckpoints, games, checkpointWriter };
 }
 
 let nextCmdIdCounter = 2000;
@@ -130,6 +132,50 @@ describe("checkpoint durability through the gateway", () => {
 
     expect(await checkpoints.readForRestore(gameId)).toBeNull();
     expect((await games.findLatestForTable("t1"))?.purged_at).not.toBeNull();
+  });
+
+  it("writes a correction-checkpoint row once a deal begins (docs/17 §5.8, D-17-19)", async () => {
+    const { actor, correctionCheckpoints } = setUpDealtGame();
+    await flush();
+    const gameId = actor.currentGameId!;
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(1);
+  });
+
+  it("writes an additional row per further accepted game command", async () => {
+    const { actor, seats, correctionCheckpoints } = setUpDealtGame();
+    await flush();
+    const gameId = actor.currentGameId!;
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(1);
+
+    seats.east.send({ t: "cmd", cmd: "draw_tile", d: { end: "head" } });
+    await flush();
+
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(2);
+  });
+
+  it("purges correction_checkpoints once the game concludes by agreement", async () => {
+    const { actor, seats, correctionCheckpoints } = setUpDealtGame();
+    await flush();
+    const gameId = actor.currentGameId!;
+
+    seats.east.send({ t: "cmd", cmd: "propose_end_game" });
+    seats.south.send({ t: "cmd", cmd: "respond_end_game", d: { response: "accept" } });
+    seats.west.send({ t: "cmd", cmd: "respond_end_game", d: { response: "accept" } });
+    seats.north.send({ t: "cmd", cmd: "respond_end_game", d: { response: "accept" } });
+    await flush();
+
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(0);
+  });
+
+  it("purges correction_checkpoints on administrative force-close", async () => {
+    const { actor, gateway, correctionCheckpoints } = setUpDealtGame();
+    await flush();
+    const gameId = actor.currentGameId!;
+
+    gateway.forceClose("administrative action");
+    await flush();
+
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(0);
   });
 
   it("never writes a checkpoint when no writer is configured", async () => {

@@ -48,7 +48,7 @@ import {
   type TableEvent,
   type WireSeatView,
 } from "@mahjong-dealer/shared";
-import { CheckpointHistory } from "./checkpoints.js";
+import { CheckpointHistory, type CheckpointEntry } from "./checkpoints.js";
 import {
   allReady,
   closeTable,
@@ -151,6 +151,12 @@ export class TableActor {
     return this.gameId;
   }
 
+  /** The most recently recorded correction-window entry, if any — lets `TableGateway.syncCheckpoint` tell whether the just-accepted command actually added a new correction-checkpoint row (by comparing its `seq` to the submit outcome's) versus reusing a stale earlier one, without `CheckpointHistory` needing any new mutation surface. */
+  get latestCorrectionCheckpoint(): CheckpointEntry | null {
+    const entries = this.checkpoints.all();
+    return entries.length === 0 ? null : entries[entries.length - 1]!;
+  }
+
   /** Called once a caller has durably purged this game's checkpoint (`CheckpointWriter.purge`) after a natural conclusion — guards against re-purging on a later submit against the same concluded game. */
   clearCurrentGameId(): void {
     this.gameId = null;
@@ -212,10 +218,13 @@ export class TableActor {
 
   /**
    * A full actor snapshot for crash recovery (docs/29_Disaster_Recovery.md).
-   * Deliberately excludes the correction checkpoint history: that window
-   * is a live, in-memory convenience (docs/05 §8.3), not a durability
-   * guarantee, so a crash reasonably narrows it to nothing rather than
-   * needing its own persistence path.
+   * Deliberately excludes the correction checkpoint history from *this*
+   * snapshot shape specifically: `snapshot()`/`fromSnapshot()` back
+   * `TableHarness.crash()/restart()` only (an in-memory test double), not
+   * the real process-restart path. Real correction-window durability goes
+   * through a separate table (`correction_checkpoints`, `D-17-19`) and a
+   * separate restore path — `fromRestoredParts`'s `correctionHistory`
+   * parameter below, fed by `CheckpointWriter.readCorrectionHistory`.
    */
   snapshot(): ActorSnapshot {
     return { table: this.table, seq: this.seq, gameStateBytes: this.checkpointBytes(), gameId: this.gameId };
@@ -239,11 +248,20 @@ export class TableActor {
    * distinct from `fromSnapshot`, which trusts `snapshot.table` wholesale;
    * that shape only suits a caller that knows its snapshot's `table` is
    * still current (there is no such caller yet).
+   *
+   * `correctionHistory` (docs/17 §5.8, `D-17-19`) replays durable
+   * correction-window entries back into a fresh `CheckpointHistory`, oldest
+   * first — the order `CheckpointWriter.readCorrectionHistory` already
+   * returns them in, matching `CheckpointHistory.record`'s own push/shift
+   * ring-buffer order. Empty by default: a table with no game, or whose
+   * correction window couldn't be read, restores exactly as it did before
+   * this durability existed — an empty window, not a failure.
    */
   static fromRestoredParts(
     options: TableActorOptions,
     table: Table,
     game: { readonly seq: number; readonly gameStateBytes: string; readonly gameId: string | null } | null,
+    correctionHistory: readonly { readonly actorSeq: number; readonly gameStateBytes: string }[] = [],
   ): TableActor {
     const actor = new TableActor(options);
     actor.table = table;
@@ -251,6 +269,9 @@ export class TableActor {
       actor.seq = game.seq;
       actor.gameState = coreRestore(game.gameStateBytes);
       actor.gameId = game.gameId;
+    }
+    for (const entry of correctionHistory) {
+      actor.checkpoints.record(entry.actorSeq, coreRestore(entry.gameStateBytes));
     }
     return actor;
   }

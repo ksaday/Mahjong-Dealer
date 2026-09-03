@@ -4,6 +4,7 @@ import { SEAT_ORDER } from "@mahjong-dealer/shared";
 import { TableHarness } from "../testing/table-harness.js";
 import { InMemoryGamesRepository } from "../tables/memory-games-repository.js";
 import { InMemoryCheckpointRepository } from "./memory-repository.js";
+import { InMemoryCorrectionCheckpointRepository } from "./correction-memory-repository.js";
 import { CheckpointWriter } from "./writer.js";
 
 function readyAllAndDeal(harness: TableHarness): void {
@@ -24,9 +25,10 @@ function endByAgreement(harness: TableHarness): void {
 function setUp() {
   const checkpoints = new InMemoryCheckpointRepository();
   const games = new InMemoryGamesRepository();
+  const correctionCheckpoints = new InMemoryCorrectionCheckpointRepository();
   const key = randomBytes(32);
-  const writer = new CheckpointWriter(checkpoints, games, key);
-  return { checkpoints, games, writer };
+  const writer = new CheckpointWriter(checkpoints, games, key, correctionCheckpoints);
+  return { checkpoints, games, correctionCheckpoints, writer };
 }
 
 describe("CheckpointWriter", () => {
@@ -109,5 +111,58 @@ describe("CheckpointWriter", () => {
     const harness = TableHarness.create({ seed: 6 });
     harness.seatAll();
     await expect(writer.concludeAndPurge(harness.actorForTest())).resolves.toBeUndefined();
+  });
+});
+
+describe("CheckpointWriter — correction-checkpoint durability (docs/17 §5.8, D-17-19)", () => {
+  it("flushCorrectionCheckpointSync records a row, round-tripping through readCorrectionHistory", async () => {
+    const { correctionCheckpoints, writer } = setUp();
+    const harness = TableHarness.create({ seed: 7 });
+    readyAllAndDeal(harness); // start_deal both records and clears the window — one entry afterward
+    const gameId = harness.currentGameId();
+    if (gameId === null) throw new Error("unreachable");
+    const entry = harness.actorForTest().latestCorrectionCheckpoint;
+    if (entry === null) throw new Error("unreachable");
+
+    await writer.flushCorrectionCheckpointSync(harness.actorForTest(), entry);
+
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(1);
+    const history = await writer.readCorrectionHistory(gameId);
+    expect(history).toEqual([{ actorSeq: entry.seq, gameStateBytes: expect.any(String) }]);
+  });
+
+  it("flushCorrectionCheckpointSync is a no-op when the actor has no current game", async () => {
+    const { correctionCheckpoints, writer } = setUp();
+    const harness = TableHarness.create({ seed: 8 });
+    harness.seatAll();
+    const fakeEntry = { seq: 1, gameState: harness.state() };
+    await writer.flushCorrectionCheckpointSync(harness.actorForTest(), fakeEntry);
+    expect(correctionCheckpoints.peek("anything")).toHaveLength(0);
+  });
+
+  it("purge also empties the correction-checkpoint window for that game", async () => {
+    const { correctionCheckpoints, writer } = setUp();
+    const harness = TableHarness.create({ seed: 9 });
+    readyAllAndDeal(harness);
+    const gameId = harness.currentGameId();
+    if (gameId === null) throw new Error("unreachable");
+    const entry = harness.actorForTest().latestCorrectionCheckpoint;
+    if (entry === null) throw new Error("unreachable");
+    await writer.startGame(gameId, "harness-table");
+    await writer.flushCorrectionCheckpointSync(harness.actorForTest(), entry);
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(1);
+
+    await writer.purge(gameId);
+
+    expect(correctionCheckpoints.peek(gameId)).toHaveLength(0);
+  });
+
+  it("readCorrectionHistory degrades gracefully — a corrupt row is skipped, not thrown", async () => {
+    const { correctionCheckpoints, writer } = setUp();
+    await correctionCheckpoints.record(
+      { id: "bad-row", gameId: "g1", seq: 1, publicState: {}, privateState: Buffer.from("not real ciphertext"), keyVersion: 1 },
+      10,
+    );
+    await expect(writer.readCorrectionHistory("g1")).resolves.toEqual([]);
   });
 });

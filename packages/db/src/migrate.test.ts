@@ -18,7 +18,17 @@ describe("listMigrations", () => {
       "0004_password_change_rate_limit.sql",
       "0005_admin_totp_step_up.sql",
       "0006_checkpoint_reader_role.sql",
+      "0007_correction_checkpoint_reader.sql",
     ]);
+  });
+});
+
+describe("0007_correction_checkpoint_reader.sql — extends app_checkpoint_reader (docs/17 §7.2, D-17-19)", () => {
+  it("grants the same columns on correction_checkpoints that 0006 grants on checkpoints, plus seq", async () => {
+    const sql = await migrationText("0007_correction_checkpoint_reader.sql");
+    expect(sql).toContain("GRANT SELECT (game_id, seq, private_state, key_version) ON correction_checkpoints TO app_checkpoint_reader;");
+    expect(sql).not.toMatch(/CREATE ROLE/u);
+    expect(sql).not.toMatch(/\bINSERT\b|\bUPDATE\b|\bDELETE\b/u);
   });
 });
 
