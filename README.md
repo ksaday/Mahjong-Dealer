@@ -184,12 +184,15 @@ A disconnecting seat now auto-pauses a game in progress (docs/22 §5): `TableGat
 `autoPauseOnAbsence`/`autoResumeOnReturn`, called from `onClose` and `handleBind`, which blindly
 submit dealer-core's own `request_pause`/`request_resume` — blindly, because those commands already
 reject outside `in_play`/`concluding` and reject a pause that isn't the caller's own, so the gateway
-needs no lifecycle logic of its own. Two gaps surfaced rather than papered over at the time: `PauseState`
-held only one seat, so a second concurrent absence couldn't register its own pause once the table was
-already paused (fixed later — `PauseState.requestedBy` is now a `ReadonlySet<Seat>`, docs/22 §5.2);
-and the wire event's `reason` field still reads `"requested"` rather than docs/22 §5's `"seat_absent"`,
-because dealer-core's `request_pause` carries no reason to distinguish the two — still open, needing
-a small dealer-core model change of its own.
+needs no lifecycle logic of its own. Two gaps surfaced rather than papered over at the time, both since
+closed: `PauseState` held only one seat, so a second concurrent absence couldn't register its own
+pause once the table was already paused (`PauseState.requestedBy` is now a `ReadonlySet<Seat>`,
+docs/22 §5.2); and the wire event's `reason` field read `"requested"` rather than docs/22 §5's
+`"seat_absent"` for an auto-pause, because dealer-core's `request_pause` command and event carry no
+reason to distinguish the two — fixed not by touching dealer-core's own wire-facing types, but by
+`TableActor.submit` gaining an out-of-band `pauseReason` parameter that overrides `TablePaused.reason`
+after `toWireEvent` runs, the same "actor overrides the event after the fact" shape already used for
+`CorrectionProposed`/`CorrectionApplied`/`ReshuffleCommitmentPublished`'s own seq fields.
 
 Heartbeats (docs/12 §7) are now built too, closing the last flagged gap in Phase 5's gateway: a real
 WebSocket protocol ping/pong loop, `ws-server.ts`'s new `startHeartbeat`, entirely at the transport

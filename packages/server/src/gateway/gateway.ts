@@ -9,9 +9,10 @@
 // (`checkSessionRevocation`, docs/12 §4.3, backed by `AuthService.
 // isSessionActive` once auth was built), and auto-pause on disconnection
 // (`autoPauseOnAbsence`/`autoResumeOnReturn`, docs/22 §5, correctly
-// multi-holder since `PauseState.requestedBy` became a `ReadonlySet<Seat>`
-// — see `autoPauseOnAbsence`'s own doc comment for the one gap that
-// remains: the wire `reason` field). Heartbeats (docs/12 §7) are
+// multi-holder since `PauseState.requestedBy` became a `ReadonlySet<Seat>`,
+// and correctly labeled on the wire — `TableActor.submit`'s own
+// `pauseReason` parameter overrides `TablePaused.reason` to
+// `"seat_absent"` for this path specifically). Heartbeats (docs/12 §7) are
 // a real WebSocket protocol ping/pong loop, entirely in `ws-server.ts`'s
 // `startHeartbeat` — invisible to this transport-agnostic module, which
 // only ever learns of a heartbeat-detected loss the same way it learns of
@@ -247,20 +248,19 @@ export class TableGateway {
    * holder, A's and B's alike, has called `request_resume` (A returning
    * does not silently clear B's still-live absence).
    *
-   * Known gap, surfaced rather than hidden: docs/22 §5 specifies
-   * `TablePaused { seat, reason: 'seat_absent' }` for this exact path, but
-   * `table/events.ts`'s `toWireEvent` hardcodes `reason: "requested"` for
-   * every `TablePaused`, because dealer-core's own `request_pause` command
+   * Correctly labeled on the wire too (docs/22 §5's `TablePaused { seat,
+   * reason: 'seat_absent' }`): dealer-core's own `request_pause` command
    * and event carry no reason at all — the same client command this
    * gateway reuses for auto-pause looks identical to dealer-core either
-   * way. Distinguishing them on the wire needs a reason to travel through
-   * dealer-core's command/event types, which is its own small design
-   * question (does the *command* carry it, or does the actor override the
-   * *event* after the fact?) left to a future slice rather than decided
-   * here as a side effect.
+   * way — so the distinction is made here, the one call site with
+   * presence knowledge, via `TableActor.submit`'s `pauseReason` parameter,
+   * which overrides `TablePaused.reason` after `toWireEvent` has already
+   * built the event (the "actor overrides the event after the fact"
+   * option, not a new command parameter — dealer-core's own wire-facing
+   * types are untouched).
    */
   private autoPauseOnAbsence(seat: Seat): void {
-    const outcome = this.actor.submit(seat, "request_pause", undefined);
+    const outcome = this.actor.submit(seat, "request_pause", undefined, "seat_absent");
     if (outcome.ok) this.deliverNewFrames();
   }
 

@@ -221,8 +221,25 @@ export class TableActor {
    * concept of the wire envelope, does not itself produce. The resulting
    * `event`/`reject` frames for every seat are still available via
    * `framesFor`, as before.
+   *
+   * `pauseReason` is not a wire parameter — `request_pause` carries none
+   * (docs/19 `request_pause | — | — | TablePaused`) — it is this actor's
+   * own out-of-band context for `gateway.ts`'s `autoPauseOnAbsence`,
+   * which is the one caller with presence knowledge dealer-core
+   * deliberately doesn't have (`state.ts`'s module comment). A genuine
+   * client `request_pause` frame never carries one, so `toWireEvent`'s
+   * own default (`"requested"`, `table/events.ts`) is what every
+   * player-initiated pause still gets; only this actor overrides it,
+   * the same "override the event after the fact" shape `applyOverrides`
+   * already uses for `CorrectionProposed`/`CorrectionApplied`/
+   * `ReshuffleCommitmentPublished`'s own seq fields.
    */
-  submit<N extends CommandName>(seat: Seat, cmd: N, params: CommandParamsMap[N]): SubmitOutcome {
+  submit<N extends CommandName>(
+    seat: Seat,
+    cmd: N,
+    params: CommandParamsMap[N],
+    pauseReason?: "seat_absent",
+  ): SubmitOutcome {
     const result = this.dispatch(seat, cmd, params);
 
     if (!result.ok) {
@@ -245,14 +262,22 @@ export class TableActor {
         const wireEvent =
           source.kind === "wire" ? source.event : toWireEvent(source.event, viewer, this.gameState, this.table);
         if (wireEvent === null) continue; // e.g. HandArranged: no wire counterpart (docs/10 §5.7)
-        this.pushFrame(viewer, { kind: "event", seq: this.seq, ev: this.applySeqOverride(wireEvent, result), view });
+        this.pushFrame(viewer, {
+          kind: "event",
+          seq: this.seq,
+          ev: this.applyOverrides(wireEvent, result, pauseReason),
+          view,
+        });
       }
     }
 
     return { ok: true, seq: this.seq };
   }
 
-  private applySeqOverride(event: TableEvent, result: DispatchOk): TableEvent {
+  private applyOverrides(event: TableEvent, result: DispatchOk, pauseReason: "seat_absent" | undefined): TableEvent {
+    if (event.type === "TablePaused" && pauseReason !== undefined) {
+      return { ...event, reason: pauseReason };
+    }
     if (event.type === "CorrectionProposed" && result.correctionSeqOverride !== undefined) {
       return { ...event, rewindTo: result.correctionSeqOverride };
     }

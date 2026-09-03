@@ -627,7 +627,16 @@ in the test at the time:
   the string because dealer-core's own `request_pause` command and `TablePaused` event carry no reason
   at all; distinguishing the two needs a reason to travel through dealer-core's command/event types,
   which is its own small design question (command-supplied, or actor-overridden after the fact?) left
-  to a future slice. **Still open.**
+  to a future slice. **Closed later, choosing "actor-overridden after the fact"**: `TableActor.submit`
+  gained an out-of-band `pauseReason?: "seat_absent"` parameter — not a wire parameter, since a real
+  client `request_pause` frame never carries one — that `applyOverrides` (renamed from
+  `applySeqOverride`, which already did the same "override the wire event after `toWireEvent`
+  built it" thing for `CorrectionProposed`/`CorrectionApplied`/`ReshuffleCommitmentPublished`'s own
+  seq fields) applies to `TablePaused.reason` specifically. `gateway.ts`'s `autoPauseOnAbsence` is the
+  only caller that ever passes it, since it's the one call site with the presence knowledge
+  dealer-core deliberately doesn't have. `TablePausedEvent.reason` (`shared/src/protocol/events.ts`)
+  was also tightened from a bare `string` to the literal union `"requested" | "seat_absent"`, since
+  those are now the only two values anything ever produces.
 
 **Heartbeat scheduling (docs/12 §7) is now built, closing the last flagged gap in Phase 5's
 gateway.** It lives entirely in `ws-server.ts` (and, reused, `multi-table-router.ts`) as a real

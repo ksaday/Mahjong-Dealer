@@ -50,7 +50,8 @@ export interface SeatReconnectedEvent {
 export interface TablePausedEvent {
   readonly type: "TablePaused";
   readonly seat: Seat;
-  readonly reason: string;
+  /** `"requested"`: an explicit `request_pause`. `"seat_absent"`: auto-pause on disconnection (docs/22 §5). */
+  readonly reason: "requested" | "seat_absent";
 }
 export interface TableResumedEvent {
   readonly type: "TableResumed";

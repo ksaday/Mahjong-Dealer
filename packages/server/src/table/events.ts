@@ -186,6 +186,9 @@ export function toWireEvent(
     case "CorrectionRejected":
       return { type: "CorrectionRejected", reason: event.reason };
     case "TablePaused":
+      // "requested" is the default; actor.ts overrides it to "seat_absent"
+      // for auto-pause, via submit()'s own pauseReason parameter — dealer-core's
+      // request_pause command and event carry no reason to distinguish the two.
       return { type: "TablePaused", seat: event.seat, reason: "requested" };
     case "TableResumed":
       return { type: "TableResumed", seat: event.seat };

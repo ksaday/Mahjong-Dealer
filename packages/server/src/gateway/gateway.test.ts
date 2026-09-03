@@ -426,11 +426,23 @@ describe("auto-pause on disconnection (docs/22 §5)", () => {
     const paused = seats.south.socket.framesOfType("event").find(
       (f) => (f["ev"] as Record<string, unknown>)["type"] === "TablePaused",
     );
-    // reason is "requested", not docs/22 §5's "seat_absent" — a known,
-    // separately-flagged gap (see autoPauseOnAbsence's own doc comment):
-    // dealer-core's request_pause carries no reason to distinguish the two.
+    // docs/22 §5: auto-pause on disconnection gets "seat_absent", not the
+    // "requested" default an explicit request_pause gets (see the test
+    // just below) — TableActor.submit's pauseReason override.
     expect(paused).toEqual(
-      expect.objectContaining({ ev: { type: "TablePaused", seat: "east", reason: "requested" } }),
+      expect.objectContaining({ ev: { type: "TablePaused", seat: "east", reason: "seat_absent" } }),
+    );
+  });
+
+  it("labels an explicit request_pause \"requested\", not \"seat_absent\" (docs/22 §5.2's separate, player-initiated pause)", () => {
+    const { seats } = setUpDealtGame();
+    seats.south.send({ t: "cmd", cmd: "request_pause" });
+
+    const paused = seats.east.socket.framesOfType("event").find(
+      (f) => (f["ev"] as Record<string, unknown>)["type"] === "TablePaused",
+    );
+    expect(paused).toEqual(
+      expect.objectContaining({ ev: { type: "TablePaused", seat: "south", reason: "requested" } }),
     );
   });
 
