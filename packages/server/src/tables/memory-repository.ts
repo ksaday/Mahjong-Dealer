@@ -3,7 +3,7 @@
 // actually exercise, with no database.
 import { SEAT_ORDER, type Seat } from "@mahjong-dealer/shared";
 import type { TableRow, TableSeatRow, TableStatusRow } from "@mahjong-dealer/db";
-import type { NewTableRow, SeatAssignment, TableRepository } from "./repository.js";
+import type { NewTableRow, SeatAssignment, TableListPage, TableListQuery, TableRepository } from "./repository.js";
 
 export class InMemoryTableRepository implements TableRepository {
   private readonly tables = new Map<string, TableRow>();
@@ -90,6 +90,12 @@ export class InMemoryTableRepository implements TableRepository {
       if (row !== undefined && table !== undefined) result.push({ table, seat: row.seat });
     }
     return Promise.resolve(result);
+  }
+
+  list(query: TableListQuery): Promise<TableListPage> {
+    const sorted = [...this.tables.values()].sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    const page = sorted.slice(query.offset, query.offset + query.limit);
+    return Promise.resolve({ tables: page, total: sorted.length });
   }
 
   private emptySeatRow(tableId: string, seat: Seat): TableSeatRow {

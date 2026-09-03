@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InMemoryAuditLogRepository } from "../audit/memory-repository.js";
 import { NullBreachChecker } from "./breach-checker.js";
 import { InMemoryAccountRepository, InMemorySessionRepository } from "./memory-repository.js";
 import { AuthService } from "./service.js";
@@ -266,5 +267,35 @@ describe("listSessions / revokeOwnSession", () => {
     const revoked = await service.revokeOwnSession(a.accountId, loginB.issued.session.id);
     expect(revoked).toBe(false);
     expect(await service.validateSession(loginB.issued.token)).not.toBeNull();
+  });
+});
+
+describe("audit logging (docs/18 §4.3 GET /admin/audit's 'authentication ... events')", () => {
+  it("records a successful login against the account, and a failed one against nobody for an unknown email", async () => {
+    const accounts = new InMemoryAccountRepository();
+    const sessions = new InMemorySessionRepository();
+    const auditLog = new InMemoryAuditLogRepository();
+    const service = new AuthService({ accounts, sessions, breachChecker: new NullBreachChecker(), env: ENV, auditLog });
+
+    const registered = await service.register("rae@example.com", "correct horse battery", "Rae");
+    if (!registered.ok) throw new Error("unreachable");
+    await service.login("rae@example.com", "correct horse battery", CONTEXT);
+    await service.login("nobody@example.com", "whatever whatever whatever", CONTEXT);
+
+    const page = await auditLog.list({ limit: 10, offset: 0 });
+    expect(page.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: "login_succeeded", actor_account_id: registered.accountId }),
+        expect.objectContaining({ action: "login_failed", actor_account_id: null }),
+      ]),
+    );
+  });
+
+  it("is a no-op when no audit log is configured", async () => {
+    const { service } = setUp();
+    await expect(service.login("nobody@example.com", "whatever whatever", CONTEXT)).resolves.toEqual({
+      ok: false,
+      code: "INVALID_CREDENTIALS",
+    });
   });
 });

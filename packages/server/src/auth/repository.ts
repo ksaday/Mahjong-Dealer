@@ -13,6 +13,28 @@ export interface NewAccount {
   readonly email: string;
   readonly passwordHash: string;
   readonly displayName: string;
+  /**
+   * Defaults to `player`. `AuthService.register()` — the only path a
+   * self-service request reaches — never sets this; an administrator
+   * account is provisioned out of band (docs/15 §8: "never by
+   * self-registration"), which in practice means calling this method
+   * directly (an ops script, or a test's seed) rather than through
+   * `POST /accounts`.
+   */
+  readonly role?: AccountRole;
+}
+
+export interface AccountListQuery {
+  readonly limit: number;
+  readonly offset: number;
+  /** Matches against email or display name, case-insensitively. */
+  readonly query?: string;
+  readonly status?: AccountStatus;
+}
+
+export interface AccountListPage {
+  readonly accounts: readonly AccountRow[];
+  readonly total: number;
 }
 
 export interface AccountRepository {
@@ -24,6 +46,8 @@ export interface AccountRepository {
   /** Durable lockout state (docs/15 §4.1, D-15-03) — never only in memory. */
   setLoginFailure(id: string, failedLogins: number, lockedUntil: Date | null): Promise<void>;
   setStatus(id: string, status: AccountStatus): Promise<void>;
+  /** `GET /admin/accounts` (docs/18 §4.3, `FR-160`) — metadata only, which is everything `AccountRow` already is. */
+  list(query: AccountListQuery): Promise<AccountListPage>;
 }
 
 export interface NewSession {

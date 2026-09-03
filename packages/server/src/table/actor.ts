@@ -165,6 +165,27 @@ export class TableActor {
     return { ok: true };
   }
 
+  /**
+   * Administrative force-close (docs/18 §4.3 `POST /admin/tables/{id}/
+   * force-close`, `FR-161`) — not a wire command and not `dispatchCloseTable`
+   * reused, because an administrator has no seat and this must work
+   * regardless of game phase, unlike a host's own `close_table` (`M-4`:
+   * `IDLE`/`SEATED` only). Purges concealed material by discarding
+   * `gameState` outright — a fresh `IDLE` state carries none — rather than
+   * running it through `CONCLUDED` first, since a forced close is
+   * definitionally not a conclusion the players reached (`NR-013`).
+   */
+  forceClose(reason: string): void {
+    this.table = closeTable(this.table);
+    this.gameState = createIdleState();
+    this.checkpoints.clear();
+    this.seq += 1;
+    const event: TableEvent = { type: "TableClosed", reason };
+    for (const viewer of SEAT_ORDER) {
+      this.pushFrame(viewer, { kind: "event", seq: this.seq, ev: event, view: this.viewFor(viewer) });
+    }
+  }
+
   /** Crash-recovery/correction primitive (DD-29, DD-30): bytes from `coreCheckpoint`. */
   checkpointBytes(): string {
     return coreCheckpoint(this.gameState);

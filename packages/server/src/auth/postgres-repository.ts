@@ -13,17 +13,24 @@
 // exercises.
 import type { Pool } from "pg";
 import type { AccountRow, AccountStatus, SessionRow } from "@mahjong-dealer/db";
-import type { AccountRepository, NewAccount, NewSession, SessionRepository } from "./repository.js";
+import type {
+  AccountListPage,
+  AccountListQuery,
+  AccountRepository,
+  NewAccount,
+  NewSession,
+  SessionRepository,
+} from "./repository.js";
 
 export class PostgresAccountRepository implements AccountRepository {
   constructor(private readonly pool: Pool) {}
 
   async create(account: NewAccount): Promise<AccountRow> {
     const { rows } = await this.pool.query<AccountRow>(
-      `INSERT INTO accounts (id, email, password_hash, display_name)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO accounts (id, email, password_hash, display_name, role)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [account.id, account.email, account.passwordHash, account.displayName],
+      [account.id, account.email, account.passwordHash, account.displayName, account.role ?? "player"],
     );
     return expectOne(rows);
   }
@@ -62,6 +69,31 @@ export class PostgresAccountRepository implements AccountRepository {
 
   async setStatus(id: string, status: AccountStatus): Promise<void> {
     await this.pool.query("UPDATE accounts SET status = $2, updated_at = now() WHERE id = $1", [id, status]);
+  }
+
+  async list(query: AccountListQuery): Promise<AccountListPage> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (query.status !== undefined) {
+      params.push(query.status);
+      conditions.push(`status = $${params.length}`);
+    }
+    if (query.query !== undefined) {
+      params.push(`%${query.query}%`);
+      conditions.push(`(email ILIKE $${params.length} OR display_name ILIKE $${params.length})`);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const { rows: countRows } = await this.pool.query<{ count: string }>(
+      `SELECT count(*) FROM accounts ${where}`,
+      params,
+    );
+    params.push(query.limit, query.offset);
+    const { rows } = await this.pool.query<AccountRow>(
+      `SELECT * FROM accounts ${where} ORDER BY created_at LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    return { accounts: rows, total: Number(countRows[0]?.count ?? 0) };
   }
 }
 

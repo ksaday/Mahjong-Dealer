@@ -90,6 +90,11 @@ export class TableHarness {
     return this.actor.seqNumber;
   }
 
+  /** Administrative force-close (docs/18 §4.3) — not a wire command, so it bypasses `seat()`. */
+  forceClose(reason: string): void {
+    this.actor.forceClose(reason);
+  }
+
   /** Snapshots the actor, as if the process died right after the last accepted command. */
   crash(): void {
     this.crashedSnapshot = this.actor.snapshot();

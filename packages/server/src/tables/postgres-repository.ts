@@ -7,7 +7,7 @@
 import type { Pool, PoolClient } from "pg";
 import { SEAT_ORDER, type Seat } from "@mahjong-dealer/shared";
 import type { TableRow, TableSeatRow, TableStatusRow } from "@mahjong-dealer/db";
-import type { NewTableRow, SeatAssignment, TableRepository } from "./repository.js";
+import type { NewTableRow, SeatAssignment, TableListPage, TableListQuery, TableRepository } from "./repository.js";
 
 export class PostgresTableRepository implements TableRepository {
   constructor(private readonly pool: Pool) {}
@@ -110,6 +110,15 @@ export class PostgresTableRepository implements TableRepository {
       [accountId],
     );
     return rows.map(({ seat, ...table }) => ({ table, seat }));
+  }
+
+  async list(query: TableListQuery): Promise<TableListPage> {
+    const { rows: countRows } = await this.pool.query<{ count: string }>("SELECT count(*) FROM tables");
+    const { rows } = await this.pool.query<TableRow>(
+      "SELECT * FROM tables ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+      [query.limit, query.offset],
+    );
+    return { tables: rows, total: Number(countRows[0]?.count ?? 0) };
   }
 }
 

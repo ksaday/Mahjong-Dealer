@@ -4,6 +4,7 @@
 // fully testable with the in-memory implementations.
 import type { AccountRow, AccountRole, SessionRow } from "@mahjong-dealer/db";
 import { uuidv7 } from "@mahjong-dealer/db";
+import type { AuditLogRepository } from "../audit/repository.js";
 import type { BreachChecker } from "./breach-checker.js";
 import { computeLockoutMinutes, isLockedOut } from "./lockout.js";
 import { checkPasswordPolicy, hashPassword, verifyPassword } from "./passwords.js";
@@ -24,6 +25,16 @@ export interface AuthServiceOptions {
   readonly accounts: AccountRepository;
   readonly sessions: SessionRepository;
   readonly breachChecker: BreachChecker;
+  /**
+   * Optional: when supplied, login outcomes are recorded (`GET
+   * /admin/audit`'s "authentication ... events", docs/18 §4.3). `logout`
+   * deliberately isn't audited here — a scope choice, not an oversight:
+   * login attempts are the security-relevant signal (repeated failures,
+   * lockouts), and adding a session lookup to every `logout()` call for a
+   * routine, self-initiated action wasn't judged worth it alongside the
+   * rest of `FR-160`–`166`'s scope. Revisit if audit review ever needs it.
+   */
+  readonly auditLog?: AuditLogRepository;
   readonly now?: () => Date;
   readonly env?: NodeJS.ProcessEnv;
 }
@@ -56,6 +67,7 @@ export class AuthService {
   private readonly accounts: AccountRepository;
   private readonly sessions: SessionRepository;
   private readonly breachChecker: BreachChecker;
+  private readonly auditLog: AuditLogRepository | undefined;
   private readonly now: () => Date;
   private readonly env: NodeJS.ProcessEnv | undefined;
 
@@ -63,8 +75,22 @@ export class AuthService {
     this.accounts = options.accounts;
     this.sessions = options.sessions;
     this.breachChecker = options.breachChecker;
+    this.auditLog = options.auditLog;
     this.now = options.now ?? (() => new Date());
     this.env = options.env;
+  }
+
+  private async audit(action: string, actorAccountId: string | null, ip: string | null): Promise<void> {
+    await this.auditLog?.record({
+      id: uuidv7(),
+      actorAccountId,
+      action,
+      targetType: null,
+      targetId: null,
+      reason: null,
+      ip,
+      occurredAt: this.now(),
+    });
   }
 
   /**
@@ -106,14 +132,17 @@ export class AuthService {
       // a genuine Argon2id verification against a real hash, not a
       // fixed delay, so the timing profile matches the real path exactly.
       await verifyPassword(await getTimingEqualizerHash(this.env), password, this.env);
+      await this.audit("login_failed", null, context.ip);
       return { ok: false, code: "INVALID_CREDENTIALS" };
     }
 
     const lockedUntil = account.locked_until;
     if (lockedUntil !== null && isLockedOut(lockedUntil, now)) {
+      await this.audit("login_blocked_locked", account.id, context.ip);
       return { ok: false, code: "ACCOUNT_LOCKED", lockedUntil };
     }
     if (account.status === "disabled") {
+      await this.audit("login_blocked_disabled", account.id, context.ip);
       return { ok: false, code: "ACCOUNT_DISABLED" };
     }
 
@@ -123,11 +152,13 @@ export class AuthService {
       const lockoutMinutes = computeLockoutMinutes(failedLogins);
       const lockedUntil = lockoutMinutes === null ? null : new Date(now.getTime() + lockoutMinutes * 60_000);
       await this.accounts.setLoginFailure(account.id, failedLogins, lockedUntil);
+      await this.audit("login_failed", account.id, context.ip);
       return { ok: false, code: "INVALID_CREDENTIALS" };
     }
 
     await this.accounts.setLoginFailure(account.id, 0, null);
     const issued = await this.issueSession(account, context);
+    await this.audit("login_succeeded", account.id, context.ip);
     return { ok: true, account, issued };
   }
 

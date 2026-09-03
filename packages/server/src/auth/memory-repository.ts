@@ -2,7 +2,7 @@
 // the same role dealer-core's deterministic entropy and the table actor's
 // TableHarness play elsewhere in this codebase.
 import type { AccountRow, AccountStatus, SessionRow } from "@mahjong-dealer/db";
-import type { AccountRepository, NewAccount, NewSession, SessionRepository } from "./repository.js";
+import type { AccountListPage, AccountListQuery, AccountRepository, NewAccount, NewSession, SessionRepository } from "./repository.js";
 
 export class InMemoryAccountRepository implements AccountRepository {
   private readonly byId = new Map<string, AccountRow>();
@@ -15,7 +15,7 @@ export class InMemoryAccountRepository implements AccountRepository {
       email_verified_at: null,
       password_hash: account.passwordHash,
       display_name: account.displayName,
-      role: "player",
+      role: account.role ?? "player",
       status: "active",
       failed_logins: 0,
       locked_until: null,
@@ -56,6 +56,21 @@ export class InMemoryAccountRepository implements AccountRepository {
   setStatus(id: string, status: AccountStatus): Promise<void> {
     this.mutate(id, (row) => ({ ...row, status, updated_at: new Date() }));
     return Promise.resolve();
+  }
+
+  list(query: AccountListQuery): Promise<AccountListPage> {
+    const needle = query.query?.toLowerCase();
+    const filtered = [...this.byId.values()]
+      .filter((row) => query.status === undefined || row.status === query.status)
+      .filter(
+        (row) =>
+          needle === undefined ||
+          row.email.toLowerCase().includes(needle) ||
+          row.display_name.toLowerCase().includes(needle),
+      )
+      .sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
+    const page = filtered.slice(query.offset, query.offset + query.limit);
+    return Promise.resolve({ accounts: page, total: filtered.length });
   }
 
   private mutate(id: string, fn: (row: AccountRow) => AccountRow): void {

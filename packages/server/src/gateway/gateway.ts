@@ -104,6 +104,25 @@ export class TableGateway {
     return this.connections.has(seat);
   }
 
+  /** `GET /admin/health`'s connection count (docs/18 §4.3, `FR-162`) — a count only, never which account. */
+  connectionCount(): number {
+    return this.connections.size;
+  }
+
+  /**
+   * Administrative force-close (docs/18 §4.3, `FR-161`): delivers the
+   * `TableClosed` event to every connected seat, same as a host's own
+   * `close_table`. Deliberately does not also drop the sockets — a
+   * self-closed table doesn't either, and a client seeing `tableState:
+   * "closed"` in the delivered view is the same signal either way; adding
+   * a forced disconnect here would be a second, differently-behaved close
+   * path for no benefit.
+   */
+  forceClose(reason: string): void {
+    this.actor.forceClose(reason);
+    this.deliverNewFrames();
+  }
+
   /**
    * A real timer should call this periodically (docs/12 §4.3): closes,
    * with `4004`, any bound connection whose session has since been

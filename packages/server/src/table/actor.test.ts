@@ -153,6 +153,31 @@ describe("close_table (docs/05 §4.1)", () => {
   });
 });
 
+describe("forceClose (docs/18 §4.3 POST /admin/tables/{id}/force-close, FR-161)", () => {
+  it("closes the table and purges the game even mid-play, unlike host close_table's own NOT_IN_PHASE guard", () => {
+    const harness = TableHarness.create({ seed: 1 });
+    readyAllAndDeal(harness);
+
+    harness.forceClose("stuck table");
+
+    expect(harness.table().status).toBe("closed");
+    expect(harness.state().lifecycle).toBe("idle");
+  });
+
+  it("delivers TableClosed with the given reason to every seat", () => {
+    const harness = TableHarness.create({ seed: 1 });
+    harness.seatAll();
+
+    harness.forceClose("policy violation");
+
+    for (const seat of SEAT_ORDER) {
+      expect(harness.frames(seat).at(-1)).toEqual(
+        expect.objectContaining({ kind: "event", ev: { type: "TableClosed", reason: "policy violation" } }),
+      );
+    }
+  });
+});
+
 describe("correction — actor-seq translation (docs/05 §8; the reconciliation actor.ts documents)", () => {
   it("propose_correction and CorrectionApplied use the client's actor-seq, not dealer-core's internal seq", () => {
     const harness = TableHarness.create({ seed: 42 });

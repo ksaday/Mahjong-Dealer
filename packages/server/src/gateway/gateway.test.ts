@@ -468,3 +468,23 @@ describe("auto-pause on disconnection (docs/22 §5)", () => {
     expect(actor.gameStateSnapshot.lifecycle).toBe("idle");
   });
 });
+
+describe("forceClose (docs/18 §4.3 POST /admin/tables/{id}/force-close, FR-161)", () => {
+  it("delivers TableClosed to every bound connection", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+
+    gateway.forceClose("stuck table");
+
+    const last = east.socket.sent.at(-1) as { readonly ev: { readonly type: string; readonly reason: string } };
+    expect(last.ev).toEqual({ type: "TableClosed", reason: "stuck table" });
+  });
+
+  it("counts connections for GET /admin/health", () => {
+    const { tickets, gateway } = setUp();
+    expect(gateway.connectionCount()).toBe(0);
+    bindSeat(gateway, tickets, "east");
+    bindSeat(gateway, tickets, "south");
+    expect(gateway.connectionCount()).toBe(2);
+  });
+});

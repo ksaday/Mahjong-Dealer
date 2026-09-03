@@ -5,13 +5,15 @@
 // on a real timer (`checkSessionRevocation`, docs/12 §4.3), detecting a
 // dead connection with real WebSocket heartbeats (`startHeartbeat`,
 // docs/12 §7), and auto-pausing a game on disconnection (docs/22 §5) —
-// accounts/sessions (Phase 3's auth half), and the table REST surface
-// (Phase 3's other half, docs/33_API §4) are in place. Not built: the
-// administrative surface (docs/33_API §5) and the live table registry's
-// crash-recovery reconstruction from a checkpoint (see
+// accounts/sessions (Phase 3's auth half), the table REST surface
+// (Phase 3's other half, docs/33_API §4), and the administrative surface
+// (docs/33_API §5, `admin/`) are in place. Not built: the TOTP/hardware
+// second factor docs/15 §8 requires on top of an administrator's session
+// (see `auth/session-guard.ts`'s `requireAdmin` for why) and the live
+// table registry's crash-recovery reconstruction from a checkpoint (see
 // tables/manager.ts's module comment). See
-// table/actor.ts, gateway/gateway.ts, auth/service.ts, and
-// tables/service.ts's module comments for scope detail.
+// table/actor.ts, gateway/gateway.ts, auth/service.ts, admin/service.ts,
+// and tables/service.ts's module comments for scope detail.
 
 export type { ActorFrame, ActorSnapshot, SubmitOutcome, TableActorOptions } from "./table/actor.js";
 export { TableActor } from "./table/actor.js";
@@ -55,6 +57,8 @@ export { computeLockoutMinutes, isLockedOut } from "./auth/lockout.js";
 export { verifyCsrf } from "./auth/csrf.js";
 export { getPasswordPepper } from "./auth/pepper.js";
 export type {
+  AccountListPage,
+  AccountListQuery,
   AccountRepository,
   NewAccount,
   NewSession,
@@ -79,6 +83,7 @@ export {
   CSRF_COOKIE,
   CSRF_HEADER,
   errorBody,
+  requireAdmin,
   requireCsrf,
   requireSession,
   SESSION_COOKIE,
@@ -92,6 +97,8 @@ export type { LiveTable } from "./tables/manager.js";
 export type {
   NewTableRow,
   SeatAssignment,
+  TableListPage,
+  TableListQuery,
   TableRepository,
 } from "./tables/repository.js";
 export { InMemoryTableRepository } from "./tables/memory-repository.js";
@@ -108,3 +115,24 @@ export type {
 } from "./tables/service.js";
 export { registerTableRoutes } from "./tables/http.js";
 export type { TableRoutesOptions } from "./tables/http.js";
+
+export type {
+  AuditLogPage,
+  AuditLogQuery,
+  AuditLogRepository,
+  NewAuditEntry,
+} from "./audit/repository.js";
+export { InMemoryAuditLogRepository } from "./audit/memory-repository.js";
+export { PostgresAuditLogRepository } from "./audit/postgres-repository.js";
+
+export { AdminService } from "./admin/service.js";
+export type {
+  AdminHealth,
+  AdminServiceOptions,
+  AdminTablePage,
+  AdminTableSummary,
+  ForceCloseTableResult,
+  SetAccountStatusResult,
+} from "./admin/service.js";
+export { registerAdminRoutes } from "./admin/http.js";
+export type { AdminRoutesOptions } from "./admin/http.js";

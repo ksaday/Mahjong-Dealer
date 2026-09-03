@@ -45,6 +45,34 @@ export async function requireSession(
   return true;
 }
 
+/**
+ * `docs/18 §4.3`'s "session + second factor → administrator" guard for
+ * every `/admin/*` route. Checks session validity and `role`; does
+ * **not** check a second factor.
+ *
+ * Known gap, flagged rather than silently narrowed: docs/15 §8 requires a
+ * TOTP or hardware-authenticator second factor on top of the session for
+ * every administrative action, and no endpoint, enrollment flow, or
+ * database column for one exists anywhere in this codebase yet — the
+ * requirement is stated at the security-architecture level with no wire
+ * mechanism specified to implement it against. Adding one means
+ * inventing a step-up-login protocol that isn't in any doc, which is a
+ * design decision, not an implementation detail; this guard's role check
+ * is what's actually built today.
+ */
+export async function requireAdmin(
+  authService: AuthService,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<boolean> {
+  if (!(await requireSession(authService, request, reply))) return false;
+  if (request.authSession!.account.role !== "administrator") {
+    await reply.code(403).send(errorBody("FORBIDDEN", "Administrator access required."));
+    return false;
+  }
+  return true;
+}
+
 /** CSRF applies only to authenticated, state-changing requests (docs/15 §4.2) — nothing to protect before a session exists. */
 export async function requireCsrf(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
   const session = request.authSession;

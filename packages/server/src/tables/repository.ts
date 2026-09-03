@@ -29,6 +29,16 @@ export interface SeatAssignment {
   readonly occupiedAt: Date | null;
 }
 
+export interface TableListQuery {
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface TableListPage {
+  readonly tables: readonly TableRow[];
+  readonly total: number;
+}
+
 export interface TableRepository {
   /** Creates the table row and its four (initially empty) seat rows. */
   create(row: NewTableRow): Promise<TableRow>;
@@ -43,6 +53,8 @@ export interface TableRepository {
   findSeatForAccountAnywhere(accountId: string): Promise<{ readonly tableId: string; readonly seat: Seat } | null>;
   /** Every table (any status) where this account currently holds a seat row — `GET /tables/mine`. */
   tablesForAccount(accountId: string): Promise<readonly { readonly table: TableRow; readonly seat: Seat }[]>;
+  /** `GET /admin/tables` (docs/18 §4.3, `FR-160`): every table, newest first. Occupant identity is deliberately not part of this row — `AdminService` adds only a seat *count* (`D-18-07`). */
+  list(query: TableListQuery): Promise<TableListPage>;
 }
 
 export type { TableRow, TableSeatRow, TableStatusRow };
