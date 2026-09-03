@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 01_Product_Requirements.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the functional requirement catalog (`FR-###`), the non-functional requirement catalog (`NFR-###`), and the acceptance criteria (`AC-###`). Does **not** own the negative requirements (`SCOPE_BOUNDARIES.md`), the performance measurement methods in depth (`23`), or any design detail — a requirement states *what*, never *how*. |
 
 ---
@@ -215,6 +215,7 @@ identified, and traceable.
 | FR-164 | An administrator has no interface, endpoint, or capability that reveals a concealed hand | Must | `NR-406`, verified by `TC-P02` |
 | FR-165 | An administrator cannot occupy a seat, act at a table, or alter game state other than by closing a table | Must | |
 | FR-166 | Every administrative action is recorded with actor, target, time, and reason | Must | |
+| FR-167 | An administrator must satisfy a second factor before any administrative action | Must | `SEC-007`, `SEC-087`–`SEC-089`; TOTP, `ADR-0017` |
 
 ---
 
@@ -407,3 +408,4 @@ of the interface.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial catalog: 96 functional, 34 non-functional, 18 acceptance criteria |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `FR-167` (administrator second factor, `ADR-0017`), within `F-11`'s already-reserved range |

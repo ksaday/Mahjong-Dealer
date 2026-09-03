@@ -47,18 +47,13 @@ export async function requireSession(
 
 /**
  * `docs/18 §4.3`'s "session + second factor → administrator" guard for
- * every `/admin/*` route. Checks session validity and `role`; does
- * **not** check a second factor.
- *
- * Known gap, flagged rather than silently narrowed: docs/15 §8 requires a
- * TOTP or hardware-authenticator second factor on top of the session for
- * every administrative action, and no endpoint, enrollment flow, or
- * database column for one exists anywhere in this codebase yet — the
- * requirement is stated at the security-architecture level with no wire
- * mechanism specified to implement it against. Adding one means
- * inventing a step-up-login protocol that isn't in any doc, which is a
- * design decision, not an implementation detail; this guard's role check
- * is what's actually built today.
+ * every `/admin/*` route: session validity, `role`, and — the TOTP
+ * step-up protocol `ADR-0017` specifies (`docs/15 §8.1`, `POST
+ * /sessions/mfa`) — `sessions.mfa_verified_at` **on this session**. A
+ * valid administrator session that hasn't stepped up gets
+ * `401 MFA_REQUIRED`, distinct from `NOT_AUTHENTICATED` (no session at
+ * all) and `FORBIDDEN` (a real session, wrong role): the client needs to
+ * know which of the three to do next — log in, step up, or neither.
  */
 export async function requireAdmin(
   authService: AuthService,
@@ -66,8 +61,13 @@ export async function requireAdmin(
   reply: FastifyReply,
 ): Promise<boolean> {
   if (!(await requireSession(authService, request, reply))) return false;
-  if (request.authSession!.account.role !== "administrator") {
+  const { account, session } = request.authSession!;
+  if (account.role !== "administrator") {
     await reply.code(403).send(errorBody("FORBIDDEN", "Administrator access required."));
+    return false;
+  }
+  if (session.mfa_verified_at === null) {
+    await reply.code(401).send(errorBody("MFA_REQUIRED", "Complete second-factor verification first."));
     return false;
   }
   return true;

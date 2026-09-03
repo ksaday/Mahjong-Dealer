@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { NullBreachChecker } from "./breach-checker.js";
 import { registerAuthRoutes } from "./http.js";
 import { InMemoryAccountRepository, InMemorySessionRepository } from "./memory-repository.js";
+import { hashPassword } from "./passwords.js";
 import { AuthService } from "./service.js";
+import { encryptTotpSecret } from "./totp-encryption.js";
+import { getTotpEncryptionKey } from "./totp-key.js";
+import { computeTotpCode, generateTotpSecret, totpStep } from "./totp.js";
 
 function parseCookies(setCookieHeaders: string | string[] | undefined): Record<string, string> {
   const headers = Array.isArray(setCookieHeaders) ? setCookieHeaders : setCookieHeaders !== undefined ? [setCookieHeaders] : [];
@@ -204,5 +208,122 @@ describe("POST /api/v1/accounts/me/password (docs/18 §6: 3/hour, durable)", () 
     expect(fourth.statusCode).toBe(429);
     expect(fourth.json().error.code).toBe("RATE_LIMITED");
     expect(Number(fourth.headers["retry-after"])).toBeGreaterThan(0);
+  });
+});
+
+describe("POST /api/v1/sessions/mfa (docs/15 §8.1, ADR-0017)", () => {
+  const ENV = { PASSWORD_PEPPER: "test-pepper" };
+
+  function setUpMfaApp() {
+    const mfaApp = Fastify();
+    const accounts = new InMemoryAccountRepository();
+    const sessions = new InMemorySessionRepository();
+    const service = new AuthService({ accounts, sessions, breachChecker: new NullBreachChecker(), env: ENV });
+    registerAuthRoutes(mfaApp, { authService: service });
+    return { mfaApp, accounts };
+  }
+
+  async function seedAdmin(accounts: InMemoryAccountRepository, email: string, password: string): Promise<Buffer> {
+    const secret = generateTotpSecret();
+    await accounts.create({
+      id: `admin-${email}`,
+      email,
+      passwordHash: await hashPassword(password, ENV),
+      displayName: "Admin",
+      role: "administrator",
+      totpSecret: encryptTotpSecret(secret, getTotpEncryptionKey(ENV)),
+      totpSecretKeyVersion: 1,
+    });
+    return secret;
+  }
+
+  async function loginCookies(mfaApp: FastifyInstance, email: string, password: string): Promise<Record<string, string>> {
+    const response = await mfaApp.inject({ method: "POST", url: "/api/v1/sessions", payload: { email, password } });
+    return parseCookies(response.headers["set-cookie"]);
+  }
+
+  it("POST /sessions carries mfa_required: true for an administrator, and omits it for a player", async () => {
+    const { mfaApp, accounts } = setUpMfaApp();
+    await seedAdmin(accounts, "root@example.com", "correct horse battery");
+    await mfaApp.inject({
+      method: "POST",
+      url: "/api/v1/accounts",
+      payload: { email: "alice@example.com", password: "correct horse battery", display_name: "Alice" },
+    });
+
+    const adminLogin = await mfaApp.inject({
+      method: "POST",
+      url: "/api/v1/sessions",
+      payload: { email: "root@example.com", password: "correct horse battery" },
+    });
+    expect(adminLogin.json().mfa_required).toBe(true);
+
+    const playerLogin = await mfaApp.inject({
+      method: "POST",
+      url: "/api/v1/sessions",
+      payload: { email: "alice@example.com", password: "correct horse battery" },
+    });
+    expect(playerLogin.json().mfa_required).toBeUndefined();
+  });
+
+  it("returns 403 FORBIDDEN for a player session — nothing to step up", async () => {
+    const { mfaApp } = setUpMfaApp();
+    await mfaApp.inject({
+      method: "POST",
+      url: "/api/v1/accounts",
+      payload: { email: "bob@example.com", password: "correct horse battery", display_name: "Bob" },
+    });
+    const cookies = await loginCookies(mfaApp, "bob@example.com", "correct horse battery");
+    const response = await mfaApp.inject({
+      method: "POST",
+      url: "/api/v1/sessions/mfa",
+      headers: { cookie: cookieHeader(cookies), "x-csrf-token": cookies["__Host-csrf"]! },
+      payload: { code: "000000" },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe("FORBIDDEN");
+  });
+
+  it("returns 400 MALFORMED when code is missing", async () => {
+    const { mfaApp, accounts } = setUpMfaApp();
+    await seedAdmin(accounts, "root@example.com", "correct horse battery");
+    const cookies = await loginCookies(mfaApp, "root@example.com", "correct horse battery");
+    const response = await mfaApp.inject({
+      method: "POST",
+      url: "/api/v1/sessions/mfa",
+      headers: { cookie: cookieHeader(cookies), "x-csrf-token": cookies["__Host-csrf"]! },
+      payload: {},
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("returns 401 MFA_INVALID for a wrong code, then 204 and admits /admin/* for the right one", async () => {
+    const { mfaApp, accounts } = setUpMfaApp();
+    const secret = await seedAdmin(accounts, "root@example.com", "correct horse battery");
+    const cookies = await loginCookies(mfaApp, "root@example.com", "correct horse battery");
+    const headers = { cookie: cookieHeader(cookies), "x-csrf-token": cookies["__Host-csrf"]! };
+
+    const wrong = await mfaApp.inject({ method: "POST", url: "/api/v1/sessions/mfa", headers, payload: { code: "000000" } });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json().error.code).toBe("MFA_INVALID");
+
+    const code = computeTotpCode(secret, totpStep(new Date()));
+    const right = await mfaApp.inject({ method: "POST", url: "/api/v1/sessions/mfa", headers, payload: { code } });
+    expect(right.statusCode).toBe(204);
+  });
+
+  it("returns 423 MFA_LOCKED with locked_until after repeated failures", async () => {
+    const { mfaApp, accounts } = setUpMfaApp();
+    await seedAdmin(accounts, "root@example.com", "correct horse battery");
+    const cookies = await loginCookies(mfaApp, "root@example.com", "correct horse battery");
+    const headers = { cookie: cookieHeader(cookies), "x-csrf-token": cookies["__Host-csrf"]! };
+
+    for (let i = 0; i < 5; i += 1) {
+      await mfaApp.inject({ method: "POST", url: "/api/v1/sessions/mfa", headers, payload: { code: "000000" } });
+    }
+    const locked = await mfaApp.inject({ method: "POST", url: "/api/v1/sessions/mfa", headers, payload: { code: "000000" } });
+    expect(locked.statusCode).toBe(423);
+    expect(locked.json().error.code).toBe("MFA_LOCKED");
+    expect(typeof locked.json().locked_until).toBe("string");
   });
 });

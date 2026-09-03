@@ -2,11 +2,13 @@
 // docs/33_API/REST_Endpoint_Catalog.md). Reuses `request`/`ApiError`
 // rather than a second HTTP implementation.
 //
-// Known gap, inherited from the server side (`server/src/auth/
-// session-guard.ts`'s `requireAdmin`): docs/15 §8 requires a second
-// factor on every one of these calls, and none of the session cookies
-// this client already sends carries one — there is nothing for this
-// module to add on the wire that isn't already invented server-side.
+// docs/15 §8's second factor (`ADR-0017`) is a session-level fact, not a
+// header or parameter any call here carries — `POST /sessions/mfa` is
+// `api.verifyMfa` in `client.ts`, driven by `screens/MfaVerify.tsx`
+// (S-09a) before a caller ever reaches this module. An unverified
+// session's call here still fails, at the server, with `401
+// MFA_REQUIRED`; `Administration.tsx` is what catches that and routes
+// back to `/mfa`.
 import { request } from "./client.js";
 
 export interface AdminAccountSummary {

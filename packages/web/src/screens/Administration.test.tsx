@@ -50,6 +50,34 @@ describe("Administration (S-09, docs/32_UX/Screen_Inventory.md §3)", () => {
     expect(await screen.findByText("Home screen")).toBeInTheDocument();
   });
 
+  it("redirects to /mfa when an admin call returns 401 MFA_REQUIRED (docs/15 §8.1, ADR-0017)", async () => {
+    // A reload restores an unverified administrator session as
+    // "authenticated" (GET /accounts/me carries no mfa_required field) —
+    // the first real /admin/* call is what actually discovers it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string) => {
+        if (input === "/api/v1/accounts/me") return Promise.resolve(meResponse());
+        return Promise.resolve(
+          jsonResponse(401, { error: { code: "MFA_REQUIRED", message: "Complete second-factor verification first." } }),
+        );
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/admin"]}>
+        <AuthProvider>
+          <ToastProvider>
+            <Routes>
+              <Route path="/admin" element={<Administration />} />
+              <Route path="/mfa" element={<div>MFA screen</div>} />
+            </Routes>
+          </ToastProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("MFA screen")).toBeInTheDocument();
+  });
+
   it("lists accounts and tables without occupant identity in the tables row (D-18-07)", async () => {
     vi.stubGlobal(
       "fetch",

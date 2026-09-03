@@ -5,7 +5,7 @@
 | **Project** | American Mahjong Dealer |
 | **Document** | SECURITY_REQUIREMENTS_MATRIX.md |
 | **Status** | Normative — binding on all implementation |
-| **Last Updated** | 2026-09-02 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the `SEC-###` catalog: every security requirement, its control, its enforcement point, and its verification. Does **not** own the controls' design (`docs/15`) or the threat analyses (`THREAT_MODEL.md`, `PRIVACY_THREAT_MODEL.md`). |
 
 ---
@@ -40,7 +40,7 @@ has nowhere to go (`THREAT_MODEL.md §5.2`).
 | SEC-004 | Authentication failures do not reveal account existence | Identical response and timing | Login | Check | `TC-S02` |
 | SEC-005 | Repeated failures are throttled durably | Per-account lockout in **PostgreSQL** | Login | Check | `TC-S02`; survives restart |
 | SEC-006 | Distributed attempts are throttled | Per-address limits | Login | Check | `TC-S04` |
-| SEC-007 | Administrators require a second factor | TOTP or hardware authenticator | Every administrative endpoint | Check | `TC-S05` |
+| SEC-007 | Administrators require a second factor | TOTP (RFC 6238); hardware authenticator is future work, `15 §15` | Every administrative endpoint, via `POST /sessions/mfa` | Check | `TC-S05` |
 | SEC-008 | Administrator accounts are not self-created | Out-of-band provisioning only | Deployment | Absence | Route audit |
 
 ## 3. Sessions — `SEC-01x`
@@ -159,6 +159,9 @@ A control at compile time is the only kind that works against a developer who is
 | SEC-084 | Administrative sessions are short | 8 h absolute, 30 min idle | Session | Check | `TC-S07` |
 | SEC-085 | No impersonation capability exists | Not implemented | Design | **Absence** | Route audit |
 | SEC-086 | No break-glass path to game content | Not implemented | Design | **Absence** | `TC-P02` |
+| SEC-087 | Repeated TOTP failures are throttled durably, separately from password lockout | Per-account lockout in **PostgreSQL** (`accounts.mfa_failed_attempts`) | `POST /sessions/mfa` | Check | `TC-S05`; survives restart |
+| SEC-088 | A TOTP code cannot be replayed, even within its own valid window | Durable last-used-step counter (`accounts.totp_last_used_step`) | `POST /sessions/mfa` | Check | `TC-S05` |
+| SEC-089 | A second factor, once satisfied, applies to the verifying session only | `sessions.mfa_verified_at`; a new login is a new, unverified session | Session | Check | `TC-S05` |
 
 ## 11. Secrets and supply chain — `SEC-09x`
 

@@ -1,5 +1,5 @@
 // The REST surface for accounts and sessions (docs/18_API_Design.md §4.1;
-// docs/33_API/REST_Endpoint_Catalog.md §3) — 8 of that catalog's
+// docs/33_API/REST_Endpoint_Catalog.md §3) — 9 of that catalog's
 // endpoints. Thin: every handler validates its own request shape, then
 // delegates to `AuthService`. The five table endpoints are `tables/http.ts`
 // (docs/18 §4.2); the administrative surface (docs/18 §4.3) is `admin/`.
@@ -10,7 +10,9 @@
 // (docs/18 §6: 3/hour) is enforced inside `AuthService.changePassword`
 // via `password-change-limit.ts`, against `accounts.password_change_count`/
 // `password_change_window_started_at` (docs/17 §5.1) — this handler only
-// translates the `RATE_LIMITED` result to `429`.
+// translates the `RATE_LIMITED` result to `429`. `POST /sessions/mfa`'s
+// own durable lockout (docs/15 §8.1, `D-17-16`) lives the same way,
+// inside `AuthService.verifyMfa`.
 import cookie from "@fastify/cookie";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { TokenBucket } from "../gateway/rate-limit.js";
@@ -104,7 +106,37 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
       account_id: result.account.id,
       display_name: result.account.display_name,
       role: result.account.role,
+      // Present, and true, only for an administrator — every fresh admin
+      // session starts unverified (docs/15 §8.1, D-17-17); a player has
+      // nothing to step up. The cookie is issued regardless: it just
+      // can't reach /admin/* yet (session-guard.ts's requireAdmin).
+      ...(result.account.role === "administrator" ? { mfa_required: true } : {}),
     });
+  });
+
+  app.post("/api/v1/sessions/mfa", async (request, reply) => {
+    if (!(await requireSession(authService, request, reply))) return;
+    if (!(await requireCsrf(request, reply))) return;
+    const body = request.body as Partial<{ code: string }>;
+    if (typeof body.code !== "string") {
+      await reply.code(400).send(errorBody("MALFORMED", "code is required."));
+      return;
+    }
+    const session = request.authSession!;
+    const result = await authService.verifyMfa(session.account.id, session.session.id, body.code);
+    if (!result.ok) {
+      if (result.code === "MFA_LOCKED") {
+        await reply.code(423).send({
+          error: { code: "MFA_LOCKED", message: "Too many failed codes; try again later." },
+          locked_until: result.lockedUntil.toISOString(),
+        });
+        return;
+      }
+      const status = result.code === "FORBIDDEN" ? 403 : 401;
+      await reply.code(status).send(errorBody(result.code, result.code === "FORBIDDEN" ? "Nothing to verify." : "Invalid or expired code."));
+      return;
+    }
+    await reply.code(204).send();
   });
 
   app.delete("/api/v1/sessions/current", async (request, reply) => {

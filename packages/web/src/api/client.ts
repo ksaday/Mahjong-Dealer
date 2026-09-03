@@ -101,6 +101,8 @@ export interface LoginResult {
   readonly account_id: string;
   readonly display_name: string;
   readonly role: "player" | "administrator";
+  /** Present, and `true`, only for an administrator whose session hasn't completed `POST /sessions/mfa` yet (docs/15 §8.1, ADR-0017). */
+  readonly mfa_required?: boolean;
 }
 
 export interface LockedError {
@@ -109,6 +111,11 @@ export interface LockedError {
 
 export function isLockedError(error: unknown): error is ApiError & LockedError {
   return error instanceof ApiError && error.code === "ACCOUNT_LOCKED";
+}
+
+/** `POST /sessions/mfa`'s own durable lockout (docs/15 §8.1) — same shape as `isLockedError`, a distinct code. */
+export function isMfaLockedError(error: unknown): error is ApiError & LockedError {
+  return error instanceof ApiError && error.code === "MFA_LOCKED";
 }
 
 export function lockedUntil(error: ApiError): string | null {
@@ -135,6 +142,10 @@ export const api = {
   },
   login(email: string, password: string): Promise<LoginResult> {
     return request("/sessions", { method: "POST", body: { email, password } });
+  },
+  /** S-09's step-up screen (docs/15 §8.1, ADR-0017) — verifies a TOTP code against the current session. */
+  verifyMfa(code: string): Promise<void> {
+    return request("/sessions/mfa", { method: "POST", body: { code } });
   },
   logout(): Promise<void> {
     return request("/sessions/current", { method: "DELETE" });

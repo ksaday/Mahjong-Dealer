@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 15_Security_Architecture.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns authentication, session management, isolation boundaries, rate limiting, transport security, and administrative security. Does **not** own the privacy model (`14`), input integrity semantics (`13`), the threat models (`THREAT_MODEL.md`, `PRIVACY_THREAT_MODEL.md`), or the requirement matrix (`SECURITY_REQUIREMENTS_MATRIX.md`). |
 
 ---
@@ -190,6 +190,7 @@ reflected script injection from the only user-generated content in the system.
 | Commands, per connection | 5/s, burst 10 | Process memory |
 | Chat, per seat | 10 per 10 s | Process memory |
 | Administrative mutations | 30/minute | PostgreSQL |
+| Administrator MFA verification, per account | 5/minute, then progressive lockout | **PostgreSQL — durable** |
 
 **The security-critical limits are durable.** A lockout that vanishes on restart is one an attacker
 waits out, so the login lockout curve and the reset limit live in PostgreSQL regardless of what
@@ -221,7 +222,7 @@ an administrator who cannot reach a hand cannot leak one.
 | Control | Design |
 |---|---|
 | Account creation | Out of band only; never by self-registration |
-| Second factor | Required, TOTP or a hardware authenticator |
+| Second factor | Required, TOTP (`§8.1`) — a hardware authenticator is future work, `§15` |
 | Session | 8 hours absolute, 30 minutes idle |
 | Network | Restricted to known addresses where the deployment permits |
 | Audit | Every action recorded with actor, target, time, and a mandatory reason |
@@ -232,6 +233,42 @@ There is no break-glass path to game content, and none should be added. A break-
 would require the capability to exist, which is precisely what `04 §3.3` avoids: an absent path has
 no failure mode, and a guarded one fails when the guard does.
 
+### 8.1 TOTP step-up (`ADR-0017`, `SEC-007`)
+
+`POST /sessions` still authenticates an administrator by password alone and issues a session — the
+second factor is not folded into that request, because the session is already the durable unit of
+authorization this system revokes and expires (`§4.2`, `§4.3`), and step-up is cheaper to express as
+"verify this session further" than as a second, parallel authentication path.
+
+| Aspect | Design |
+|---|---|
+| Algorithm | RFC 6238 TOTP, HMAC-SHA1, 6 digits, 30-second period |
+| Drift tolerance | ±1 step (accepts the previous, current, or next 30-second window) |
+| Replay prevention | The account's last-accepted time step is recorded; a step at or before it is rejected even if otherwise valid |
+| Secret storage | `accounts.totp_secret`, application-layer AES-256-GCM (`17 §7.1`), a key distinct from the checkpoint encryption key |
+| Verification endpoint | `POST /sessions/mfa` — `{ code }` → `204`, sets `sessions.mfa_verified_at` on the calling session only |
+| Gate | Every `/admin/*` endpoint (`requireAdmin`) additionally requires `mfa_verified_at` **on the session that is asking** — `401 MFA_REQUIRED` otherwise |
+| Rate limit | 5/minute per account, then progressive lockout — the same durable curve as login (`§7.1`, `lockout.ts`'s curve), tracked separately from password-lockout state |
+| Scope | One verification per session, for that session's life (`§4.2`'s existing absolute/idle timers) — no separate step-up timer |
+
+A session that never completes step-up is not useless: `requireSession` still accepts it (the player
+half of the account model has no concept of "half-authenticated"), but `requireAdmin` never does.
+This mirrors `requireCsrf`'s existing shape — one check layered onto session validity, not a second
+authentication system.
+
+### 8.2 Enrollment and recovery are operational, not endpoints
+
+Enrollment happens once, out of band, in the same act that provisions the account (`28 §3`): the
+provisioning procedure generates the account and its TOTP secret together and displays the secret
+once. There is no enrollment endpoint and no in-app setup screen — the same reasoning `04 §3.3`
+already applies to account creation itself (never self-registration) extends to the secret that
+protects it.
+
+A lost device is recovered the same way a compromised account is handled today: disable
+(`PATCH /admin/accounts/{id}`) and re-provision. There are no recovery codes and no self-service
+reset. `ADR-0017` records why this, and not a WebAuthn build or a recovery-code subsystem, is the
+right size for an administrative surface this small.
+
 ---
 
 ## 9. Secrets
@@ -240,6 +277,7 @@ no failure mode, and a guarded one fails when the guard does.
 |---|---|
 | Password pepper | Secret manager; never in the database or in configuration files |
 | Checkpoint encryption key | Secret manager; envelope encryption where the platform supports it |
+| TOTP secret encryption key | Secret manager; distinct from the checkpoint key so rotating one never touches the other (`§8.1`, `17 §7.1`) |
 | Session signing material | Secret manager |
 | Database credentials | Secret manager; rotated on a schedule |
 
@@ -274,6 +312,8 @@ default (`NFR-044`). Starting with a placeholder is worse than not starting, bec
 | D-15-08 | Record the join-code analysis explicitly | The length invites objection, and the answer depends on limits and validity as much as on entropy. |
 | D-15-09 | Refuse to start without required secrets | A service running on placeholder secrets looks healthy and is not. |
 | D-15-10 | Chat rendered as plain text, never as markup | Removes injection from the only user-generated content. |
+| D-15-11 | TOTP step-up verifies the session, not a second authentication path | The session is already the durable, revocable unit of authorization (`D-15-02`); step-up adds one fact to it rather than duplicating login. `ADR-0017`. |
+| D-15-12 | Administrator MFA enrollment and recovery are out-of-band operational procedures, not endpoints | Matches account creation itself (`D-15-07`'s neighbor, `04 §3.3`): an absent enrollment/recovery capability has no failure mode. `ADR-0017`. |
 
 ---
 
@@ -289,6 +329,9 @@ default (`NFR-044`). Starting with a placeholder is worse than not starting, bec
 | An audited administrative view of live tables | The audit records the access; it does not undo it. |
 | Composition rules for passwords | Push users toward predictable patterns; length plus a breach check is stronger. |
 | Automatic dependency updates | An unreviewed update runs in the process that holds every concealed hand. |
+| WebAuthn/hardware-authenticator support in v1 | Materially larger surface — attestation, credential storage, a browser ceremony — for five endpoints and a hand-provisioned account population. `ADR-0017`. |
+| Self-service TOTP enrollment (a first-login "scan this QR" screen) | Leaves the account unprotected between creation and first login, exactly the window out-of-band account creation already closes. `ADR-0017`. |
+| Self-service recovery codes for a lost TOTP device | Its own hashed, single-use storage and UI for a population this small; re-provisioning already exists as a procedure. `ADR-0017`. |
 
 ---
 
@@ -320,6 +363,9 @@ runs in the context that holds a seat's concealed hand.
 | Operator curiosity | No administrative path; encryption at rest; purge at game close |
 | A compromised dependency reads hands | Minimized client dependencies; scanning; denied install scripts |
 | Secrets in configuration or logs | Secret manager; startup refusal; log scanner |
+| A TOTP code brute-forced | Durable, progressive per-account lockout (`§7.1`, `§8.1`) — 1-in-10⁶ per guess, throttled to 5/minute |
+| A stolen encrypted TOTP secret is decrypted offline | Application-layer AES-256-GCM with a key held only in the secret manager, distinct from the checkpoint key (`§9`) |
+| An administrator's device clock drifts, locking them out | ±1 step tolerance (`§8.1`) absorbs ordinary drift; a device far enough out of sync to exceed it is itself worth investigating |
 
 ---
 
@@ -327,7 +373,9 @@ runs in the context that holds a seat's concealed hand.
 
 Not committed: optional second factor for players; passkeys as a login method; per-game encryption
 keys so that destroying a key is itself a purge (`14 §14`); a published vulnerability disclosure
-policy.
+policy; WebAuthn/hardware-authenticator support for administrators, alongside TOTP, behind the same
+step-up endpoint (`ADR-0017`); self-service recovery codes, if the administrator population ever
+grows enough that out-of-band re-provisioning becomes the bottleneck it isn't today.
 
 ---
 
@@ -350,3 +398,4 @@ policy.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial chapter |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `§8.1`/`§8.2`: TOTP step-up protocol for administrators (`ADR-0017`, closes `SEC-007`); `D-15-11`, `D-15-12` |

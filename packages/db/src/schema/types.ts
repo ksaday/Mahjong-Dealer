@@ -25,6 +25,15 @@ export interface AccountRow {
   /** Durable rate-limit counter for `POST /accounts/me/password` (docs/15 §7.1, docs/18 §6: "3/hour"). */
   readonly password_change_count: number;
   readonly password_change_window_started_at: Date | null;
+  /** AES-256-GCM ciphertext (docs/17 §7.1, D-17-15); administrators only. Secret. */
+  readonly totp_secret: Buffer | null;
+  readonly totp_secret_key_version: number | null;
+  readonly totp_enrolled_at: Date | null;
+  /** Durable replay guard for `POST /sessions/mfa` (docs/15 §8.1). */
+  readonly totp_last_used_step: bigint | null;
+  /** Durable lockout counter for `POST /sessions/mfa`, separate from `failed_logins` (`D-17-16`). */
+  readonly mfa_failed_attempts: number;
+  readonly mfa_locked_until: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -39,6 +48,8 @@ export interface SessionRow {
   readonly last_seen_at: Date;
   readonly absolute_expires_at: Date;
   readonly revoked_at: Date | null;
+  /** Set by `POST /sessions/mfa`; per-session, not per-account (`D-17-17`). */
+  readonly mfa_verified_at: Date | null;
   readonly ip: string | null;
   readonly user_agent: string | null;
 }

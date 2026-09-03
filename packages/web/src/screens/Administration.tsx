@@ -33,30 +33,62 @@ export function Administration() {
 
   const isAdmin = state.status === "authenticated" && state.account.role === "administrator";
 
-  const loadAccounts = useCallback((query: string) => {
-    adminApi
-      .listAccounts({ query })
-      .then((result) => setAccounts(result.accounts))
-      .catch(() => setAccounts([]));
-  }, []);
+  /**
+   * A page reload restores an unverified administrator session as
+   * `"authenticated"` (`GET /accounts/me` carries no `mfa_required`
+   * field by design, docs/15 §8.1) — this is where that shows up: the
+   * first real `/admin/*` call gets `401 MFA_REQUIRED`, and every loader
+   * below routes it here rather than the generic empty-state fallback.
+   */
+  const handleLoadError = useCallback(
+    (error: unknown): boolean => {
+      if (error instanceof ApiError && error.code === "MFA_REQUIRED") {
+        navigate("/mfa", { replace: true });
+        return true;
+      }
+      return false;
+    },
+    [navigate],
+  );
+
+  const loadAccounts = useCallback(
+    (query: string) => {
+      adminApi
+        .listAccounts({ query })
+        .then((result) => setAccounts(result.accounts))
+        .catch((error: unknown) => {
+          if (!handleLoadError(error)) setAccounts([]);
+        });
+    },
+    [handleLoadError],
+  );
 
   const loadTables = useCallback(() => {
     adminApi
       .listTables()
       .then((result) => setTables(result.tables))
-      .catch(() => setTables([]));
-  }, []);
+      .catch((error: unknown) => {
+        if (!handleLoadError(error)) setTables([]);
+      });
+  }, [handleLoadError]);
 
   const loadHealth = useCallback(() => {
-    adminApi.health().then(setHealth).catch(() => setHealth(null));
-  }, []);
+    adminApi
+      .health()
+      .then(setHealth)
+      .catch((error: unknown) => {
+        if (!handleLoadError(error)) setHealth(null);
+      });
+  }, [handleLoadError]);
 
   const loadAudit = useCallback(() => {
     adminApi
       .audit()
       .then((result) => setAudit(result.entries))
-      .catch(() => setAudit([]));
-  }, []);
+      .catch((error: unknown) => {
+        if (!handleLoadError(error)) setAudit([]);
+      });
+  }, [handleLoadError]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -71,6 +103,9 @@ export function Administration() {
   }
   if (state.status === "anonymous") {
     return <Navigate to="/" replace />;
+  }
+  if (state.status === "mfa_pending") {
+    return <Navigate to="/mfa" replace />;
   }
   if (!isAdmin) {
     return <Navigate to="/home" replace />;

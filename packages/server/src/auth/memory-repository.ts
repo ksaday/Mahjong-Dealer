@@ -21,6 +21,12 @@ export class InMemoryAccountRepository implements AccountRepository {
       locked_until: null,
       password_change_count: 0,
       password_change_window_started_at: null,
+      totp_secret: account.totpSecret ?? null,
+      totp_secret_key_version: account.totpSecretKeyVersion ?? null,
+      totp_enrolled_at: account.totpSecret !== undefined ? now : null,
+      totp_last_used_step: null,
+      mfa_failed_attempts: 0,
+      mfa_locked_until: null,
       created_at: now,
       updated_at: now,
     };
@@ -57,6 +63,16 @@ export class InMemoryAccountRepository implements AccountRepository {
 
   setPasswordChangeAttempt(id: string, count: number, windowStartedAt: Date): Promise<void> {
     this.mutate(id, (row) => ({ ...row, password_change_count: count, password_change_window_started_at: windowStartedAt }));
+    return Promise.resolve();
+  }
+
+  setMfaFailure(id: string, failedAttempts: number, lockedUntil: Date | null): Promise<void> {
+    this.mutate(id, (row) => ({ ...row, mfa_failed_attempts: failedAttempts, mfa_locked_until: lockedUntil }));
+    return Promise.resolve();
+  }
+
+  setTotpLastUsedStep(id: string, step: bigint): Promise<void> {
+    this.mutate(id, (row) => ({ ...row, totp_last_used_step: step }));
     return Promise.resolve();
   }
 
@@ -100,6 +116,7 @@ export class InMemorySessionRepository implements SessionRepository {
       last_seen_at: session.issuedAt,
       absolute_expires_at: session.absoluteExpiresAt,
       revoked_at: null,
+      mfa_verified_at: null,
       ip: session.ip,
       user_agent: session.userAgent,
     };
@@ -127,6 +144,12 @@ export class InMemorySessionRepository implements SessionRepository {
   revoke(id: string, revokedAt: Date): Promise<void> {
     const row = this.byId.get(id);
     if (row !== undefined) this.byId.set(id, { ...row, revoked_at: revokedAt });
+    return Promise.resolve();
+  }
+
+  setMfaVerified(id: string, verifiedAt: Date): Promise<void> {
+    const row = this.byId.get(id);
+    if (row !== undefined) this.byId.set(id, { ...row, mfa_verified_at: verifiedAt });
     return Promise.resolve();
   }
 

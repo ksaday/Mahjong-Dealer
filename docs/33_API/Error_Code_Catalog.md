@@ -5,7 +5,7 @@
 | **Project** | American Mahjong Dealer |
 | **Document** | 33_API/Error_Code_Catalog.md |
 | **Status** | Normative — machine-checkable. Ch. 21 remains authoritative for semantics |
-| **Last Updated** | 2026-09-02 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns every error code, close code, and notice kind, with the client action for each. Does **not** own error semantics (`21`) or the name catalog (`19`). |
 
 ---
@@ -99,6 +99,8 @@ connection that displaced this one, and two tabs would fight indefinitely.
 | 400 | `REASON_REQUIRED` | An administrative mutation without a reason |
 | 401 | `INVALID_CREDENTIALS` | Wrong password **or unknown account** |
 | 401 | `NO_SESSION` | Missing or invalid session |
+| 401 | `MFA_INVALID` | Wrong or expired TOTP code, or a replayed one (`ADR-0017`) |
+| 401 | `MFA_REQUIRED` | A valid administrator session that has not yet called `POST /sessions/mfa` |
 | 403 | `ACCOUNT_DISABLED` | The account is disabled |
 | 403 | `CSRF_INVALID` | Anti-forgery token missing or wrong |
 | 403 | `FORBIDDEN` | Authenticated but not permitted |
@@ -110,6 +112,7 @@ connection that displaced this one, and two tabs would fight indefinitely.
 | 422 | `PASSWORD_BREACHED` | Present in a known-compromised list |
 | 422 | `DISPLAY_NAME_INVALID` | Fails validation |
 | 423 | `ACCOUNT_LOCKED` | Lockout in effect; carries `locked_until` |
+| 423 | `MFA_LOCKED` | Durable step-up lockout in effect; carries `locked_until`, tracked separately from `ACCOUNT_LOCKED` (`D-17-16`) |
 | 429 | `RATE_LIMITED` | Carries `Retry-After` |
 | 500 | `INTERNAL` | Carries a correlation identifier and nothing else |
 
@@ -171,3 +174,4 @@ any of those judgments.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role) | Initial catalog: 16 rejections, 8 close codes, 17 REST codes, 9 absence patterns |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: added `MFA_REQUIRED`, `MFA_INVALID`, `MFA_LOCKED` |

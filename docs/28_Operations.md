@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 28_Operations.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns operational procedures: administration, monitoring response, runbooks, and the support model. Does **not** own the deployment topology (`27`), disaster recovery (`29`), or the observability surface (`20`). |
 
 ---
@@ -47,7 +47,7 @@ Capabilities are exactly those in `04 §4`. The operational notes on each:
 
 | Task | Procedure |
 |---|---|
-| Provision an administrator | Out of band, at deploy time; never self-registration. Requires a second factor before first use |
+| Provision an administrator | Out of band, at deploy time; never self-registration. Requires a second factor before first use (`§3.1`) |
 | Disable an account | `PATCH /admin/accounts/{id}` with a mandatory reason; revokes every session immediately |
 | Investigate a report | Public event log by `tableId` and `seq`; account metadata; audit log. **No game content** |
 | Force-close a stuck table | `POST /admin/tables/{id}/force-close` with a reason; participants notified; concealed material purged |
@@ -58,7 +58,30 @@ Every administrative action carries a **mandatory reason** and is audited (`FR-1
 required by the endpoint rather than by policy, so an unexplained administrative action is not
 possible rather than merely discouraged.
 
-### 3.1 What an operator cannot do
+### 3.1 Provisioning an administrator (`15 §8.1`–`§8.2`, `ADR-0017`)
+
+A provisioning script — not a REST endpoint, per `ADR-0017`'s decision that enrollment is
+out-of-band, matching account creation itself — performs the whole procedure in one act:
+
+1. Generate a 160-bit TOTP secret and create the account (`role: administrator`) with it, encrypted,
+   in a single transaction. There is no window where the account exists without its second factor.
+2. Display the secret once — as an `otpauth://` URI, a QR code, or both — to whoever is running the
+   script. Nothing is written to a log, and the plaintext secret is never stored or transmitted again.
+3. Hand the secret to the administrator through a separate out-of-band channel from the one used to
+   tell them their account exists (the same discipline `04 §3.3` already applies to the account
+   itself).
+
+The administrator's first `POST /sessions` succeeds on password alone, as it does for anyone, but the
+resulting session cannot reach `/admin/*` until `POST /sessions/mfa` is called with a code from the
+authenticator app or device the secret was loaded into.
+
+### 3.2 A lost TOTP device
+
+There is no self-service recovery and no recovery codes (`ADR-0017`). Disable the account
+(`PATCH /admin/accounts/{id}`, above) and provision a fresh one (`§3.1`). This is the same procedure
+that handles a compromised account, applied for a different reason — not a new capability.
+
+### 3.3 What an operator cannot do
 
 Restated because it is the defining operational constraint: view a concealed hand, view a live
 table's tiles, read table chat, occupy a seat, act at a table, impersonate a player, or recover a
@@ -272,3 +295,4 @@ verification results.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial chapter |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: `§3.1` provisioning-with-TOTP procedure, `§3.2` lost-device recovery; renumbered old `§3.1` to `§3.3` |

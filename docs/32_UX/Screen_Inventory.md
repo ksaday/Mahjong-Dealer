@@ -5,7 +5,7 @@
 | **Project** | American Mahjong Dealer |
 | **Document** | 32_UX/Screen_Inventory.md |
 | **Status** | Detail for ratified chapters — Ch. 11 and Ch. 24 remain authoritative |
-| **Last Updated** | 2026-09-02 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the `S-##` screen catalog and each screen's purpose and states. Does **not** own interaction design (`11`), accessibility requirements (`24`), or the table layout (`Table_Layout_and_Perspective.md`). |
 
 ---
@@ -45,7 +45,8 @@ flowchart LR
     S06 -->|"table closed"| S04
     S04 --> S07["S-07 Account"]
     S04 --> S08["S-08 Help"]
-    S03 -->|administrator| S09["S-09 Administration"]
+    S03 -->|administrator| S09a["S-09a MFA verification"]
+    S09a -->|code verified| S09["S-09 Administration"]
 ```
 
 A concluded game returns to `S-05` rather than `S-04`: the table survives, readiness clears, and the
@@ -112,6 +113,15 @@ you a past game, and nobody — including the operator — can see your tiles.
 The second part is unusual for a help page and is deliberate (`D-28-06`). It is cheaper than
 explaining it one support request at a time, and it is the product's most distinctive claim.
 
+### S-09a MFA verification (`docs/15 §8.1`, `ADR-0017`)
+Not one of the nine (`D-32-01`) — a narrow gate on the way to `S-09`, never independently reachable
+and never linked from anywhere else. One field: a 6-digit code, submitted to `POST /sessions/mfa`.
+States: entering a code; a wrong code (the same message every time, never distinguishing "wrong" from
+"expired"); the durable lockout (`423 MFA_LOCKED`), stating its expiry the same way `S-03`'s account
+lockout does (`D-32-04`). No "forgot your code" link and no recovery flow — a lost device is an
+out-of-band operational procedure (`docs/28 §3.2`), not something this screen can help with, so it
+doesn't offer to.
+
 ### S-09 Administration
 Accounts list with disable, tables list with force-close, health, audit log. Every mutation requires
 a reason (`FR-166`).
@@ -157,3 +167,4 @@ seat count, not occupants (`D-18-07`).
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role) | Initial inventory: 9 screens |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `S-09a` MFA verification (`ADR-0017`) — a gate on `S-09`, not a tenth screen |

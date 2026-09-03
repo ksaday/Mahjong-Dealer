@@ -16,6 +16,7 @@ describe("listMigrations", () => {
       "0002_roles_and_grants.sql",
       "0003_idempotency_keys.sql",
       "0004_password_change_rate_limit.sql",
+      "0005_admin_totp_step_up.sql",
     ]);
   });
 });
@@ -158,5 +159,23 @@ describe("0004_password_change_rate_limit.sql — durable POST /accounts/me/pass
     const sql = await migrationText("0004_password_change_rate_limit.sql");
     expect(sql).toContain("ADD COLUMN password_change_count integer NOT NULL DEFAULT 0");
     expect(sql).toContain("ADD COLUMN password_change_window_started_at timestamptz");
+  });
+});
+
+describe("0005_admin_totp_step_up.sql — administrator TOTP step-up (docs/15 §8.1, ADR-0017)", () => {
+  it("adds the TOTP and MFA-lockout columns to accounts", async () => {
+    const sql = await migrationText("0005_admin_totp_step_up.sql");
+    expect(sql).toContain("ADD COLUMN totp_secret bytea");
+    expect(sql).toContain("ADD COLUMN totp_secret_key_version integer");
+    expect(sql).toContain("ADD COLUMN totp_enrolled_at timestamptz");
+    expect(sql).toContain("ADD COLUMN totp_last_used_step bigint");
+    expect(sql).toContain("ADD COLUMN mfa_failed_attempts integer NOT NULL DEFAULT 0");
+    expect(sql).toContain("ADD COLUMN mfa_locked_until timestamptz");
+  });
+
+  it("adds mfa_verified_at to sessions and grants app_readonly only that column", async () => {
+    const sql = await migrationText("0005_admin_totp_step_up.sql");
+    expect(sql).toContain("ADD COLUMN mfa_verified_at timestamptz");
+    expect(sql).toContain("GRANT SELECT (mfa_verified_at) ON sessions TO app_readonly;");
   });
 });

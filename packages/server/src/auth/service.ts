@@ -11,6 +11,9 @@ import { checkPasswordChangeWindow } from "./password-change-limit.js";
 import { checkPasswordPolicy, hashPassword, verifyPassword } from "./passwords.js";
 import type { AccountRepository, SessionRepository } from "./repository.js";
 import { generateCsrfSecret, generateSessionToken, hashToken } from "./tokens.js";
+import { decryptTotpSecret } from "./totp-encryption.js";
+import { getTotpEncryptionKey } from "./totp-key.js";
+import { verifyTotpCode } from "./totp.js";
 
 const PLAYER_SESSION_ABSOLUTE_DAYS = 30;
 const PLAYER_SESSION_IDLE_DAYS = 7;
@@ -59,6 +62,11 @@ export type ChangePasswordResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: "INVALID_CREDENTIALS" | "PASSWORD_TOO_SHORT" | "PASSWORD_BREACHED" }
   | { readonly ok: false; readonly code: "RATE_LIMITED"; readonly retryAfter: Date };
+
+export type MfaVerifyResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: "FORBIDDEN" | "MFA_INVALID" }
+  | { readonly ok: false; readonly code: "MFA_LOCKED"; readonly lockedUntil: Date };
 
 export interface AuthenticatedSession {
   readonly account: AccountRow;
@@ -273,6 +281,60 @@ export class AuthService {
     await this.accounts.updatePasswordHash(accountId, passwordHash);
     await this.sessions.revokeAllForAccount(accountId, this.now(), currentSessionId);
     return { ok: true };
+  }
+
+  /**
+   * `POST /sessions/mfa` (docs/15 §8.1, `ADR-0017`): verifies a TOTP code
+   * against `accountId`'s own secret and, on success, marks `sessionId`
+   * — that session alone (`D-17-17`) — as MFA-verified. `FORBIDDEN` for a
+   * non-administrator account: there is nothing to step up (`requireAdmin`
+   * is the only thing that ever checks `mfa_verified_at`).
+   *
+   * The durable lockout (`mfa_failed_attempts`/`mfa_locked_until`) is its
+   * own counter, separate from password lockout (`D-17-16`) — checked
+   * before verification and updated after, mirroring `login`'s shape for
+   * `failed_logins`.
+   */
+  async verifyMfa(accountId: string, sessionId: string, code: string): Promise<MfaVerifyResult> {
+    const account = await this.accounts.findById(accountId);
+    if (account === null || account.role !== "administrator") return { ok: false, code: "FORBIDDEN" };
+
+    const now = this.now();
+    if (account.mfa_locked_until !== null && isLockedOut(account.mfa_locked_until, now)) {
+      return { ok: false, code: "MFA_LOCKED", lockedUntil: account.mfa_locked_until };
+    }
+
+    const result = this.checkTotpCode(account, code, now);
+
+    if (!result.valid) {
+      const failedAttempts = account.mfa_failed_attempts + 1;
+      const lockoutMinutes = computeLockoutMinutes(failedAttempts);
+      const lockedUntil = lockoutMinutes === null ? null : new Date(now.getTime() + lockoutMinutes * 60_000);
+      await this.accounts.setMfaFailure(accountId, failedAttempts, lockedUntil);
+      return { ok: false, code: "MFA_INVALID" };
+    }
+
+    await this.accounts.setMfaFailure(accountId, 0, null);
+    await this.accounts.setTotpLastUsedStep(accountId, result.step);
+    await this.sessions.setMfaVerified(sessionId, now);
+    return { ok: true };
+  }
+
+  /**
+   * A missing secret (an account somehow reached without one — provisioning's
+   * own invariant, docs/15 §8.2) or a decryption failure (wrong key, a
+   * corrupt row) fails closed as an ordinary wrong code, the same
+   * discipline `verifyPassword` already applies to a malformed hash: a
+   * verification failure, not a crash.
+   */
+  private checkTotpCode(account: AccountRow, code: string, now: Date): ReturnType<typeof verifyTotpCode> {
+    if (account.totp_secret === null) return { valid: false };
+    try {
+      const secret = decryptTotpSecret(account.totp_secret, getTotpEncryptionKey(this.env));
+      return verifyTotpCode({ secret, code, lastUsedStep: account.totp_last_used_step, now });
+    } catch {
+      return { valid: false };
+    }
   }
 
   async listSessions(accountId: string): Promise<readonly SessionRow[]> {

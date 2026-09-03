@@ -4,8 +4,8 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 25_Testing_Strategy.md |
-| **Status** | Ratified v0.1 — approved by the project owner, 2026-09-02 |
-| **Last Updated** | 2026-09-02 |
+| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns what is tested, what deliberately is not, the suite catalog, and the release gates. Does **not** own harness design (`26`), the detailed suite specifications (`34_Testing/`), or acceptance criteria (`01 §7`). |
 
 ---
@@ -206,7 +206,7 @@ Authentication, session, and isolation behaviour. Verifies the `SEC-###` catalog
 | `TC-S02` | A wrong password and an unknown account produce identical responses and comparable timing; six rapid failures lock the account, and **the lock survives a server restart** |
 | `TC-S03` | Session revocation invalidates REST within one request and closes a bound socket within 5 seconds |
 | `TC-S04` | Every rate limit in `15 §7.1` engages at its stated threshold; security-critical limits survive a restart |
-| `TC-S05` | Every administrative endpoint refuses a session without a satisfied second factor |
+| `TC-S05` | Every administrative endpoint refuses a session without a satisfied second factor (`401 MFA_REQUIRED`); a valid TOTP code succeeds, a wrong one fails, a replayed one fails even within its own window, and repeated failures lock durably (`ADR-0017`) |
 | `TC-S06` | Session cookies carry `Secure`, `HttpOnly`, `SameSite`, and the host prefix; the token is unreachable by script |
 | `TC-S07` | Idle and absolute session expiry are enforced server-side; a client-held token cannot extend either; administrator sessions use the shorter limits |
 | `TC-S08` | A non-safe request without a matching anti-forgery token is rejected |
@@ -349,3 +349,4 @@ games unattended.
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial strategy: 9 suite families, 8 gate stages |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | `TC-S05` made concrete now that `ADR-0017` specifies the second-factor mechanism |

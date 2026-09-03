@@ -22,6 +22,14 @@ export interface NewAccount {
    * `POST /accounts`.
    */
   readonly role?: AccountRole;
+  /**
+   * Provisioned together with the account, out of band, at creation time
+   * (docs/15 §8.2, `ADR-0017`) — administrators only. There is no
+   * separate enrollment endpoint or later mutation: encrypted once here
+   * (`totp-encryption.ts`), or never set.
+   */
+  readonly totpSecret?: Buffer;
+  readonly totpSecretKeyVersion?: number;
 }
 
 export interface AccountListQuery {
@@ -47,6 +55,10 @@ export interface AccountRepository {
   setLoginFailure(id: string, failedLogins: number, lockedUntil: Date | null): Promise<void>;
   /** Durable rate-limit state for `POST /accounts/me/password` (docs/15 §7.1, docs/18 §6) — same reasoning as `setLoginFailure`. */
   setPasswordChangeAttempt(id: string, count: number, windowStartedAt: Date): Promise<void>;
+  /** Durable `POST /sessions/mfa` lockout state, tracked separately from `setLoginFailure` (docs/15 §8.1, `D-17-16`). */
+  setMfaFailure(id: string, failedAttempts: number, lockedUntil: Date | null): Promise<void>;
+  /** Records the step a successful `POST /sessions/mfa` call verified against — the durable replay guard (docs/15 §8.1). */
+  setTotpLastUsedStep(id: string, step: bigint): Promise<void>;
   setStatus(id: string, status: AccountStatus): Promise<void>;
   /** `GET /admin/accounts` (docs/18 §4.3, `FR-160`) — metadata only, which is everything `AccountRow` already is. */
   list(query: AccountListQuery): Promise<AccountListPage>;
@@ -75,6 +87,8 @@ export interface SessionRepository {
   findById(id: string): Promise<SessionRow | null>;
   touch(id: string, lastSeenAt: Date): Promise<void>;
   revoke(id: string, revokedAt: Date): Promise<void>;
+  /** Set by a successful `POST /sessions/mfa` — this session only (docs/15 §8.1, `D-17-17`). */
+  setMfaVerified(id: string, verifiedAt: Date): Promise<void>;
   /** Every active session for an account, optionally excluding one (docs/33_API `POST /accounts/me/password`: "the initiating session survives"). */
   revokeAllForAccount(accountId: string, revokedAt: Date, exceptSessionId?: string): Promise<void>;
   listActiveForAccount(accountId: string): Promise<readonly SessionRow[]>;

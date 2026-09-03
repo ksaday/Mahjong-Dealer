@@ -12,7 +12,7 @@
 
 ## 1. The route inventory is closed
 
-The fourteen endpoints below are the **complete** REST surface. A registered route not listed here
+The twenty endpoints below are the **complete** REST surface. A registered route not listed here
 fails `TC-A10`.
 
 Closing the inventory matters because the surface's most important property is what it lacks: no
@@ -50,13 +50,33 @@ A duplicate email returns `201` with no account created and notifies the existin
 ```
 Auth: none    Rate: 5/min per account (durable lockout) · 20/min per address
 Request:   { "email": string, "password": string }
-Response:  200 { "account_id": uuid, "display_name": string, "role": "player"|"administrator" }
+Response:  200 { "account_id": uuid, "display_name": string, "role": "player"|"administrator",
+                 "mfa_required": boolean? }
            + Set-Cookie: __Host-session, __Host-csrf
 Errors:    401 INVALID_CREDENTIALS · 423 ACCOUNT_LOCKED { "locked_until": iso8601 }
            · 403 ACCOUNT_DISABLED · 429 RATE_LIMITED
 ```
 `INVALID_CREDENTIALS` is returned identically, after equivalent work, for a wrong password and an
-unknown account.
+unknown account. `mfa_required` is present, and `true`, only for an administrator whose session has
+not yet completed `POST /sessions/mfa` (`15 §8.1`, `ADR-0017`) — absent for a player, and absent for
+an administrator session that already has (a re-login always starts unverified again, `D-17-17`).
+The session cookie is issued regardless; it simply cannot reach `/admin/*` until step-up succeeds.
+
+### `POST /sessions/mfa`
+```
+Auth: session    Rate: 5/min per account (durable lockout)
+Request:   { "code": string }
+Response:  204
+Errors:    400 MALFORMED · 401 MFA_INVALID · 403 FORBIDDEN · 423 MFA_LOCKED { "locked_until": iso8601 }
+           · 429 RATE_LIMITED
+```
+`code` is a 6-digit TOTP code (RFC 6238, HMAC-SHA1, 30-second period, ±1 step drift tolerance).
+Verifies against the calling session's own account and, on success, sets that **session's**
+`mfa_verified_at` — every other session for the account, and any future login, is unaffected.
+`403 FORBIDDEN` for a non-administrator account: there is nothing to step up. Replayed codes are
+rejected even within their valid window (`17 §5.1`'s `totp_last_used_step`). Failures are tracked in
+`accounts.mfa_failed_attempts`/`mfa_locked_until`, a durable counter separate from password lockout
+(`D-17-16`).
 
 ### `DELETE /sessions/current`
 ```
@@ -162,7 +182,9 @@ client receives an opaque value. Redeemed in the socket's first frame, **never i
 
 ## 5. Administration
 
-Every endpoint requires an administrator session with a satisfied second factor.
+Every endpoint requires an administrator session with a satisfied second factor: `401 NO_SESSION`
+for no session, `403 FORBIDDEN` for a player session, `401 MFA_REQUIRED` for an administrator session
+that has not yet called `POST /sessions/mfa` (`§3`, `15 §8.1`, `ADR-0017`).
 
 ### `GET /admin/accounts`
 ```
@@ -248,3 +270,4 @@ Machine-checked by `TC-A10`. A registered route matching any pattern below fails
 | 0.1 | 2026-09-02 | Design (architect role) | Initial catalog: 14 endpoints, 9 absence patterns |
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | Noted the `Idempotency-Key` replay exception on `POST /tables`'s join-code note |
 | 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `429 RATE_LIMITED` to `POST /accounts/me/password`'s error list, now that its durable limit is implemented |
+| 0.4 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: added `POST /sessions/mfa`; `mfa_required` on `POST /sessions`; corrected the route count from 14 to 20 (`§1`) |

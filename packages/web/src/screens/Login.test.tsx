@@ -33,6 +33,7 @@ function renderLoginWithDestinations() {
             <Route path="/login" element={<Login />} />
             <Route path="/home" element={<div>Home screen</div>} />
             <Route path="/admin" element={<div>Administration screen</div>} />
+            <Route path="/mfa" element={<div>MFA screen</div>} />
           </Routes>
         </ToastProvider>
       </AuthProvider>
@@ -88,11 +89,33 @@ describe("Login (S-03, docs/32_UX/Screen_Inventory.md §3)", () => {
     expect(screen.getByRole("button", { name: "Log in" })).toBeDisabled();
   });
 
-  it("sends a player to home and an administrator to S-09 (Screen_Inventory §2)", async () => {
+  it("sends a player straight to home", async () => {
     const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
       if (input === "/api/v1/accounts/me") return Promise.resolve(jsonResponse(401, { error: { code: "NOT_AUTHENTICATED", message: "No valid session." } }));
       if (input === "/api/v1/sessions" && init?.method === "POST") {
-        return Promise.resolve(jsonResponse(200, { account_id: "admin-1", display_name: "Root", role: "administrator" }));
+        return Promise.resolve(jsonResponse(200, { account_id: "player-1", display_name: "Alice", role: "player" }));
+      }
+      throw new Error(`unexpected fetch: ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderLoginWithDestinations();
+    await waitFor(() => expect(screen.getByLabelText("Email")).toBeEnabled());
+    await user.type(screen.getByLabelText("Email"), "alice@example.com");
+    await user.type(screen.getByLabelText("Password"), "whatever whatever");
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+
+    expect(await screen.findByText("Home screen")).toBeInTheDocument();
+  });
+
+  it("sends an administrator to S-09a to verify a second factor, not straight to S-09 (docs/15 §8.1, ADR-0017, Screen_Inventory §2)", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: string, init?: RequestInit) => {
+      if (input === "/api/v1/accounts/me") return Promise.resolve(jsonResponse(401, { error: { code: "NOT_AUTHENTICATED", message: "No valid session." } }));
+      if (input === "/api/v1/sessions" && init?.method === "POST") {
+        return Promise.resolve(
+          jsonResponse(200, { account_id: "admin-1", display_name: "Root", role: "administrator", mfa_required: true }),
+        );
       }
       throw new Error(`unexpected fetch: ${input}`);
     });
@@ -105,6 +128,7 @@ describe("Login (S-03, docs/32_UX/Screen_Inventory.md §3)", () => {
     await user.type(screen.getByLabelText("Password"), "whatever whatever");
     await user.click(screen.getByRole("button", { name: "Log in" }));
 
-    expect(await screen.findByText("Administration screen")).toBeInTheDocument();
+    expect(await screen.findByText("MFA screen")).toBeInTheDocument();
+    expect(screen.queryByText("Administration screen")).not.toBeInTheDocument();
   });
 });

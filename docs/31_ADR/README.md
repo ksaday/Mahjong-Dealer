@@ -5,7 +5,7 @@
 | **Project** | American Mahjong Dealer |
 | **Document** | 31_ADR/README.md |
 | **Status** | Index — normative content lives in the individual records |
-| **Last Updated** | 2026-09-02 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Index of architecture decisions. Owns no decision itself. |
 
 An ADR records a decision that shapes the architecture: one that was genuinely contested, that
@@ -44,3 +44,4 @@ respectively rather than deciding anything independent.
 | [0014](ADR-0014-single-node-deployment.md) | Single-node v1; no Redis, and the trigger that would introduce it | Accepted | `27` |
 | [0015](ADR-0015-typescript-and-fastify.md) | TypeScript end-to-end with Fastify | Accepted | `03` |
 | [0016](ADR-0016-consent-based-rewind.md) | Bounded consent-based rewind, with wall reshuffle | Accepted | `05` |
+| [0017](ADR-0017-admin-totp-step-up.md) | TOTP step-up authentication for administrators | Accepted | `15` |

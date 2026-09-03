@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 17_Database_Design.md |
-| **Status** | Ratified v0.3 — approved by the project owner, 2026-09-03 |
+| **Status** | Ratified v0.4 — approved by the project owner, 2026-09-03 |
 | **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the physical schema: tables, columns, constraints, indexes, encryption, and privileges. Does **not** own what data exists or why (`16`), the privacy classification (`14`), or migration operations (`27`). |
 
@@ -90,12 +90,28 @@ seat rows, occupied or not.
 | `locked_until` | timestamptz null | Durable lockout expiry | |
 | `password_change_count` | integer | Durable rate-limit counter for `POST /accounts/me/password` (`15 §7.1`, `18 §6`: "3/hour") | |
 | `password_change_window_started_at` | timestamptz null | Start of the current rate-limit window | |
+| `totp_secret` | bytea null | AES-256-GCM ciphertext; administrators only (`15 §8.1`, `ADR-0017`) | **Secret** |
+| `totp_secret_key_version` | integer null | Same rotation-without-rewrite purpose as `checkpoints.key_version` (`D-17-05`), a distinct key (`15 §9`) | |
+| `totp_enrolled_at` | timestamptz null | Set once, out of band, at provisioning (`15 §8.2`) | |
+| `totp_last_used_step` | bigint null | Durable replay guard: a step at or before this is rejected even if otherwise valid (`15 §8.1`) | |
+| `mfa_failed_attempts` | integer | Durable lockout counter for `POST /sessions/mfa`, tracked separately from `failed_logins` (`15 §7.1`) | |
+| `mfa_locked_until` | timestamptz null | Durable lockout expiry for the same | |
 | `created_at`, `updated_at` | timestamptz | | |
 
 The lockout and password-change rate-limit columns are in the database rather than a cache
 deliberately: a control that vanishes on restart is one an attacker waits out (`D-15-03`). The
 password-change columns hold a flat fixed window (`D-17-14`), not the lockout columns' progressive
-curve — the endpoint's own limit (`18 §6`) is flat.
+curve — the endpoint's own limit (`18 §6`) is flat. The `mfa_*` columns reuse `failed_logins`'
+progressive curve exactly (`D-17-16`), but as their own counter: a wrong TOTP code is a different
+failure from a wrong password, and conflating them would either lock a correctly-authenticated
+administrator out of *retrying* step-up, or reset inappropriately.
+
+`totp_secret` is **not** column-denied from the general `app` role the way `private_state` is
+(`§7.2`): unlike a checkpoint's concealed material, which the application reads through one narrow
+path at actor start, the TOTP secret must be decrypted and checked on every `POST /sessions/mfa`
+call — the normal application flow, not a special one. The protection here is the encryption itself,
+plus `app_readonly` never seeing the column at all (`§7.2`), the same posture `password_hash` and
+`token_hash` already have.
 
 ### 5.2 `sessions`
 
@@ -107,9 +123,13 @@ curve — the endpoint's own limit (`18 §6`) is flat.
 | `csrf_secret` | text | Double-submit secret (`15 §4.2`) | **Secret** |
 | `issued_at`, `last_seen_at`, `absolute_expires_at` | timestamptz | | |
 | `revoked_at` | timestamptz null | Non-null closes bound sockets within 5 s | |
+| `mfa_verified_at` | timestamptz null | Set by `POST /sessions/mfa`; gates `/admin/*` for **this session only** (`15 §8.1`, `ADR-0017`) | |
 | `ip`, `user_agent` | text null | Security review only | Operational |
 
 Unique index on `token_hash`. Partial index on `(account_id)` where `revoked_at is null`.
+
+`mfa_verified_at` is per-session, not per-account, deliberately: a second login is a second session
+and starts unverified again, the same way `revoked_at` doesn't carry across sessions either.
 
 ### 5.3 `connect_tickets`
 
@@ -317,20 +337,22 @@ Each replaces application logic that would be subject to a race.
 | Layer | Covers |
 |---|---|
 | Platform disk encryption | Everything |
-| **Application-layer AES-256-GCM** | `checkpoints.private_state`, `correction_checkpoints.private_state` |
+| **Application-layer AES-256-GCM** | `checkpoints.private_state`, `correction_checkpoints.private_state`, `accounts.totp_secret` |
 
 The application layer matters because platform encryption protects against a stolen disk, not against
-a query. A `SELECT *` on a checkpoint yields ciphertext.
+a query. A `SELECT *` on a checkpoint — or on `accounts.totp_secret` — yields ciphertext.
 
-Keys live in the secret manager, versioned (`key_version`) so rotation does not require rewriting
-existing rows. A production start fails if the key is absent or a development default (`NFR-044`).
+Keys live in the secret manager, versioned (`key_version` / `totp_secret_key_version`) so rotation
+does not require rewriting existing rows. A production start fails if a required key is absent or a
+development default (`NFR-044`). `totp_secret`'s key is its own secret-manager entry, distinct from
+the checkpoint key (`15 §9`), so rotating one never touches rows encrypted under the other.
 
 ### 7.2 Roles and grants
 
 | Role | Grants |
 |---|---|
 | `app` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on all tables **except no `SELECT` on either `private_state` column** — obtained through a dedicated decryption path — **and `idempotency_keys`, `SELECT`/`INSERT` only**: a row is never updated and is never explicitly deleted, only aged out (`§5.12`) |
-| `app_readonly` | `SELECT` on public tables only; **no grant on `private_state`, `password_hash`, `token_hash`, `csrf_secret`** |
+| `app_readonly` | `SELECT` on public tables only; **no grant on `private_state`, `password_hash`, `token_hash`, `csrf_secret`, `totp_secret`, `totp_secret_key_version`, `totp_last_used_step`** |
 | `migrator` | DDL; used only by migrations |
 
 The column-level denial on `private_state` for the general application role is the second barrier
@@ -388,6 +410,9 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | D-17-12 | UUIDv7 primary keys | Time-ordered index locality without exposing sequential identifiers. |
 | D-17-13 | `idempotency_keys` caches a full response, not just a fact-of-completion flag | A client retrying `POST /tables` after a lost response needs the identical body back, `join_code` included (`18 §7`, `D-18-11`) — a completion flag alone would tell it the create succeeded but not what it needs to act on it. |
 | D-17-14 | `POST /accounts/me/password`'s durable rate limit is a flat fixed window, not `failed_logins`' progressive curve | `18 §6` specifies a flat 3/hour, not an escalating one; reusing the lockout shape would invent a policy the spec doesn't call for. |
+| D-17-15 | `totp_secret` is encrypted but not column-denied from the general `app` role | Unlike `private_state`, read once at actor start through a narrow path, the TOTP secret is decrypted on every `POST /sessions/mfa` call — the normal application flow. `ADR-0017`. |
+| D-17-16 | MFA lockout (`mfa_failed_attempts`/`mfa_locked_until`) reuses the login lockout curve, as its own separate counter | A wrong TOTP code is a different failure than a wrong password; sharing `failed_logins` would let one lock out the other. `ADR-0017`. |
+| D-17-17 | `mfa_verified_at` lives on `sessions`, not `accounts` | Step-up verifies *this session*, not the account generally — a new login is a new session and starts unverified again, the same way `revoked_at` doesn't carry across sessions. `D-15-11`, `ADR-0017`. |
 
 ---
 
@@ -408,6 +433,9 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | No TTL — rely on the caller to delete its own key | A client that never retries leaves the row forever; an unconditional short TTL needs no cooperation. |
 | Progressive lockout for password-change attempts, mirroring login | `18 §6` specifies a flat 3/hour, not an escalating curve (`D-17-14`). |
 | An in-memory counter for the password-change limit | The same reasoning as the login lockout: it vanishes on restart, which an attacker can wait out (`D-15-03`). |
+| Column-denying `totp_secret` from `app` the way `private_state` is denied | The application needs to decrypt and check it on every step-up call, not through a narrow, occasional path (`D-17-15`). |
+| Sharing `failed_logins`/`locked_until` for MFA failures too | A wrong TOTP code and a wrong password are different failure modes; one counter would let either lock out the other (`D-17-16`). |
+| `mfa_verified_at` on `accounts`, verified once per account rather than per session | Would let a stolen session cookie inherit a step-up an entirely different login performed; sessions are already the system's unit of revocation (`D-17-17`). |
 
 ---
 
@@ -440,6 +468,8 @@ nothing queries it. It is read whole, by one path, at actor start.
 | A migration weakens a constraint | Migrations are reviewed against `§6`; the constraint list is part of the definition of done |
 | `app_readonly` is granted more than intended | Grants asserted in a schema test |
 | A cached join code in `idempotency_keys` outlives its purpose | 10-minute `expires_at`; no `app_readonly` grant; nothing reads the table back to a human (`§5.12`) |
+| `totp_secret`'s encryption key is lost | Versioned (`totp_secret_key_version`); loss requires re-provisioning affected administrators — a small, known population (`15 §8.2`) |
+| A TOTP code brute-forced against `mfa_failed_attempts` | Durable, progressive lockout, the same curve as login (`D-17-16`) |
 
 ---
 
@@ -471,3 +501,4 @@ analysis.
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial schema: 11 tables |
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `idempotency_keys` (`§5.12`) for `D-18-10`; twelve tables; `D-17-13` |
 | 0.3 | 2026-09-03 | Design (architect role), owner-approved | Added `accounts.password_change_count`/`password_change_window_started_at` (`§5.1`) for the durable `POST /accounts/me/password` limit; `D-17-14` |
+| 0.4 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: `accounts.totp_secret`/`totp_secret_key_version`/`totp_enrolled_at`/`totp_last_used_step`/`mfa_failed_attempts`/`mfa_locked_until` and `sessions.mfa_verified_at` (`§5.1`, `§5.2`); `D-17-15`–`D-17-17` |

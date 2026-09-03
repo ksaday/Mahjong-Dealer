@@ -27,10 +27,19 @@ export class PostgresAccountRepository implements AccountRepository {
 
   async create(account: NewAccount): Promise<AccountRow> {
     const { rows } = await this.pool.query<AccountRow>(
-      `INSERT INTO accounts (id, email, password_hash, display_name, role)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO accounts (id, email, password_hash, display_name, role, totp_secret, totp_secret_key_version, totp_enrolled_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [account.id, account.email, account.passwordHash, account.displayName, account.role ?? "player"],
+      [
+        account.id,
+        account.email,
+        account.passwordHash,
+        account.displayName,
+        account.role ?? "player",
+        account.totpSecret ?? null,
+        account.totpSecretKeyVersion ?? null,
+        account.totpSecret !== undefined ? new Date() : null,
+      ],
     );
     return expectOne(rows);
   }
@@ -72,6 +81,18 @@ export class PostgresAccountRepository implements AccountRepository {
       "UPDATE accounts SET password_change_count = $2, password_change_window_started_at = $3 WHERE id = $1",
       [id, count, windowStartedAt],
     );
+  }
+
+  async setMfaFailure(id: string, failedAttempts: number, lockedUntil: Date | null): Promise<void> {
+    await this.pool.query("UPDATE accounts SET mfa_failed_attempts = $2, mfa_locked_until = $3 WHERE id = $1", [
+      id,
+      failedAttempts,
+      lockedUntil,
+    ]);
+  }
+
+  async setTotpLastUsedStep(id: string, step: bigint): Promise<void> {
+    await this.pool.query("UPDATE accounts SET totp_last_used_step = $2 WHERE id = $1", [id, step]);
   }
 
   async setStatus(id: string, status: AccountStatus): Promise<void> {
@@ -144,6 +165,10 @@ export class PostgresSessionRepository implements SessionRepository {
 
   async revoke(id: string, revokedAt: Date): Promise<void> {
     await this.pool.query("UPDATE sessions SET revoked_at = $2 WHERE id = $1", [id, revokedAt]);
+  }
+
+  async setMfaVerified(id: string, verifiedAt: Date): Promise<void> {
+    await this.pool.query("UPDATE sessions SET mfa_verified_at = $2 WHERE id = $1", [id, verifiedAt]);
   }
 
   async revokeAllForAccount(accountId: string, revokedAt: Date, exceptSessionId?: string): Promise<void> {

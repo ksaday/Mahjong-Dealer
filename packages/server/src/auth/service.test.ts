@@ -3,6 +3,9 @@ import { InMemoryAuditLogRepository } from "../audit/memory-repository.js";
 import { NullBreachChecker } from "./breach-checker.js";
 import { InMemoryAccountRepository, InMemorySessionRepository } from "./memory-repository.js";
 import { AuthService } from "./service.js";
+import { encryptTotpSecret } from "./totp-encryption.js";
+import { getTotpEncryptionKey } from "./totp-key.js";
+import { computeTotpCode, generateTotpSecret, totpStep } from "./totp.js";
 
 const ENV = { PASSWORD_PEPPER: "test-pepper" };
 const CONTEXT = { ip: "127.0.0.1", userAgent: "test-agent" };
@@ -338,5 +341,146 @@ describe("audit logging (docs/18 §4.3 GET /admin/audit's 'authentication ... ev
       ok: false,
       code: "INVALID_CREDENTIALS",
     });
+  });
+});
+
+describe("verifyMfa (docs/33_API POST /sessions/mfa, docs/15 §8.1, ADR-0017)", () => {
+  async function setUpAdmin(now?: () => Date) {
+    const accounts = new InMemoryAccountRepository();
+    const sessions = new InMemorySessionRepository();
+    const service = new AuthService({
+      accounts,
+      sessions,
+      breachChecker: new NullBreachChecker(),
+      env: ENV,
+      ...(now !== undefined ? { now } : {}),
+    });
+    const secret = generateTotpSecret();
+    const admin = await accounts.create({
+      id: "admin-1",
+      email: "root@example.com",
+      passwordHash: "irrelevant-for-these-tests",
+      displayName: "Root",
+      role: "administrator",
+      totpSecret: encryptTotpSecret(secret, getTotpEncryptionKey(ENV)),
+      totpSecretKeyVersion: 1,
+    });
+    const session = await sessions.create({
+      id: "session-1",
+      accountId: admin.id,
+      tokenHash: Buffer.from("token-hash"),
+      csrfSecret: "csrf",
+      issuedAt: new Date(),
+      absoluteExpiresAt: new Date(Date.now() + 3_600_000),
+      ip: null,
+      userAgent: null,
+    });
+    return { accounts, sessions, service, admin, session, secret };
+  }
+
+  function codeAt(secret: Buffer, now: Date): string {
+    return computeTotpCode(secret, totpStep(now));
+  }
+
+  it("rejects a non-administrator account with FORBIDDEN", async () => {
+    const { service, accounts, sessions } = await setUpAdmin();
+    const player = await accounts.create({
+      id: "player-1",
+      email: "alice@example.com",
+      passwordHash: "irrelevant",
+      displayName: "Alice",
+    });
+    const session = await sessions.create({
+      id: "session-2",
+      accountId: player.id,
+      tokenHash: Buffer.from("th2"),
+      csrfSecret: "csrf2",
+      issuedAt: new Date(),
+      absoluteExpiresAt: new Date(Date.now() + 3_600_000),
+      ip: null,
+      userAgent: null,
+    });
+    const result = await service.verifyMfa(player.id, session.id, "000000");
+    expect(result).toEqual({ ok: false, code: "FORBIDDEN" });
+  });
+
+  it("rejects an unknown account with FORBIDDEN", async () => {
+    const { service, session } = await setUpAdmin();
+    expect(await service.verifyMfa("no-such-account", session.id, "000000")).toEqual({ ok: false, code: "FORBIDDEN" });
+  });
+
+  it("accepts a valid code and verifies only the calling session", async () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const { service, sessions, admin, session, secret } = await setUpAdmin(() => now);
+    const otherSession = await sessions.create({
+      id: "session-other",
+      accountId: admin.id,
+      tokenHash: Buffer.from("th3"),
+      csrfSecret: "csrf3",
+      issuedAt: now,
+      absoluteExpiresAt: new Date(now.getTime() + 3_600_000),
+      ip: null,
+      userAgent: null,
+    });
+
+    const result = await service.verifyMfa(admin.id, session.id, codeAt(secret, now));
+    expect(result).toEqual({ ok: true });
+
+    expect((await sessions.findById(session.id))?.mfa_verified_at).toEqual(now);
+    expect((await sessions.findById(otherSession.id))?.mfa_verified_at).toBeNull();
+  });
+
+  it("rejects a wrong code with MFA_INVALID and records the failure durably", async () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const { service, accounts, admin, session } = await setUpAdmin(() => now);
+    const result = await service.verifyMfa(admin.id, session.id, "000000");
+    expect(result).toEqual({ ok: false, code: "MFA_INVALID" });
+    expect((await accounts.findById(admin.id))?.mfa_failed_attempts).toBe(1);
+  });
+
+  it("rejects a replayed code — the same step cannot verify twice", async () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const { service, session, admin, secret } = await setUpAdmin(() => now);
+    const code = codeAt(secret, now);
+    expect(await service.verifyMfa(admin.id, session.id, code)).toEqual({ ok: true });
+    expect(await service.verifyMfa(admin.id, session.id, code)).toEqual({ ok: false, code: "MFA_INVALID" });
+  });
+
+  it("locks out durably after repeated failures, and a correct code is rejected while locked", async () => {
+    let now = new Date("2026-01-01T00:00:00Z");
+    const { service, admin, session, secret } = await setUpAdmin(() => now);
+
+    for (let i = 0; i < 5; i += 1) {
+      now = new Date(now.getTime() + 1000);
+      const result = await service.verifyMfa(admin.id, session.id, "000000");
+      expect(result).toEqual({ ok: false, code: "MFA_INVALID" });
+    }
+
+    now = new Date(now.getTime() + 1000);
+    const locked = await service.verifyMfa(admin.id, session.id, codeAt(secret, now));
+    expect(locked).toEqual({ ok: false, code: "MFA_LOCKED", lockedUntil: expect.any(Date) });
+  });
+
+  it("fails closed (MFA_INVALID) for an administrator with no TOTP secret provisioned", async () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const { service, accounts, sessions } = await setUpAdmin(() => now);
+    const bare = await accounts.create({
+      id: "admin-bare",
+      email: "bare@example.com",
+      passwordHash: "irrelevant",
+      displayName: "Bare",
+      role: "administrator",
+    });
+    const bareSession = await sessions.create({
+      id: "session-bare",
+      accountId: bare.id,
+      tokenHash: Buffer.from("th-bare"),
+      csrfSecret: "csrf-bare",
+      issuedAt: now,
+      absoluteExpiresAt: new Date(now.getTime() + 3_600_000),
+      ip: null,
+      userAgent: null,
+    });
+    expect(await service.verifyMfa(bare.id, bareSession.id, "123456")).toEqual({ ok: false, code: "MFA_INVALID" });
   });
 });

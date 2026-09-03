@@ -7,11 +7,15 @@
 // docs/12 §7), and auto-pausing a game on disconnection (docs/22 §5) —
 // accounts/sessions (Phase 3's auth half), the table REST surface
 // (Phase 3's other half, docs/33_API §4), and the administrative surface
-// (docs/33_API §5, `admin/`) are in place. Not built: the TOTP/hardware
-// second factor docs/15 §8 requires on top of an administrator's session
-// (see `auth/session-guard.ts`'s `requireAdmin` for why) and the live
-// table registry's crash-recovery reconstruction from a checkpoint (see
-// tables/manager.ts's module comment). See
+// (docs/33_API §5, `admin/`) are in place, now including the TOTP second
+// factor docs/15 §8.1 requires on top of an administrator's session
+// (`ADR-0017`: `auth/totp.ts`, `POST /sessions/mfa`, `requireAdmin`'s
+// `mfa_verified_at` check). Enrollment is out-of-band by design — there
+// is no enrollment endpoint — via `NewAccount.totpSecret`; a standalone
+// provisioning script that calls it does not exist yet (docs/28 §3.1
+// specifies the procedure). Not built: the live table registry's
+// crash-recovery reconstruction from a checkpoint (see tables/manager.ts's
+// module comment). See
 // table/actor.ts, gateway/gateway.ts, auth/service.ts, admin/service.ts,
 // and tables/service.ts's module comments for scope detail.
 
@@ -58,6 +62,20 @@ export { checkPasswordChangeWindow } from "./auth/password-change-limit.js";
 export type { PasswordChangeCheck, PasswordChangeWindow } from "./auth/password-change-limit.js";
 export { verifyCsrf } from "./auth/csrf.js";
 export { getPasswordPepper } from "./auth/pepper.js";
+export { getTotpEncryptionKey } from "./auth/totp-key.js";
+export { encryptTotpSecret, decryptTotpSecret, CURRENT_KEY_VERSION as TOTP_KEY_VERSION } from "./auth/totp-encryption.js";
+export {
+  base32Encode,
+  buildOtpauthUri,
+  computeTotpCode,
+  generateTotpSecret,
+  TOTP_SECRET_BYTES,
+  totpStep,
+  verifyTotpCode,
+} from "./auth/totp.js";
+export type { TotpVerification, TotpVerifyResult } from "./auth/totp.js";
+export { provisionAdministrator } from "./auth/provisioning.js";
+export type { ProvisionedAdministrator } from "./auth/provisioning.js";
 export type {
   AccountListPage,
   AccountListQuery,
@@ -75,6 +93,7 @@ export type {
   ChangePasswordResult,
   IssuedSession,
   LoginResult,
+  MfaVerifyResult,
   RegisterResult,
   RequestContext,
 } from "./auth/service.js";

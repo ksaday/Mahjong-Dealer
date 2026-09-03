@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 18_API_Design.md |
-| **Status** | Ratified v0.2 — approved by the project owner, 2026-09-03 |
+| **Status** | Ratified v0.3 — approved by the project owner, 2026-09-03 |
 | **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns REST conventions, the endpoint catalog, and the REST security contract. Does **not** own the WebSocket protocol (`12`, `19`), authentication mechanics (`15`), or the error code catalog in detail (`33_API/Error_Code_Catalog.md`). |
 
@@ -12,7 +12,7 @@
 
 ## 1. Executive Summary
 
-The REST surface is deliberately thin: **fourteen endpoints**, and none of them touches a live table.
+The REST surface is deliberately thin: **twenty endpoints**, and none of them touches a live table.
 
 The division is strict. REST handles what is independent and request-shaped — registering, logging
 in, creating a table, joining by code, minting the credential that opens a socket. Everything that
@@ -88,7 +88,8 @@ Format: **purpose · authentication → authorization · request → response ·
 | Endpoint | Specification |
 |---|---|
 | `POST /accounts` | Register · none · `{ email, password, display_name }` → `201 { account_id }` · Password checked against a breach list; minimum 12 characters. Rate limited per address. A duplicate email returns `201` with no account created and sends a notification to the existing address — enumeration is prevented by not distinguishing the cases. (`FR-001`) |
-| `POST /sessions` | Log in · none · `{ email, password }` → `200 { account_id, display_name, role }` + session cookie · Identical response and timing for a wrong password and an unknown account. Durable per-account lockout after five failures. (`FR-002`, `FR-006`) |
+| `POST /sessions` | Log in · none · `{ email, password }` → `200 { account_id, display_name, role, mfa_required? }` + session cookie · Identical response and timing for a wrong password and an unknown account. Durable per-account lockout after five failures. For an administrator, the session is issued but cannot reach `/admin/*` until `POST /sessions/mfa` succeeds; `mfa_required: true` is present only in that case. (`FR-002`, `FR-006`, `SEC-007`, `ADR-0017`) |
+| `POST /sessions/mfa` | Administrator step-up · session · `{ code }` → `204` · Verifies a TOTP code against the calling session's account and sets `sessions.mfa_verified_at` for **this session only**. Durably rate limited per account, progressive lockout. `403` for a non-administrator account — nothing to step up. (`15 §8.1`, `SEC-007`, `ADR-0017`) |
 | `DELETE /sessions/current` | Log out · session · — → `204` · Revokes the session; any bound socket closes within 5 s. (`FR-003`) |
 | `GET /accounts/me` | Own profile · session · — → `200 { account_id, email, display_name, role }` · Own account only. (`FR-004`) |
 | `PATCH /accounts/me` | Update own profile · session · `{ display_name? }` → `200` · Display name only; email changes require verification and are out of v1 scope. (`FR-004`) |
@@ -158,6 +159,7 @@ response body contains tile data.
 | `POST /tables`, per account | 10/hour | Memory |
 | `POST /tables/{id}/connect-ticket`, per session | 10/minute | Memory |
 | `/admin/*` mutations | 30/minute | PostgreSQL |
+| `POST /sessions/mfa`, per account | 5/minute, then progressive lockout | **PostgreSQL** |
 
 Security-critical limits are durable (`15 §7`). A `429` carries `Retry-After`.
 
@@ -168,7 +170,7 @@ Security-critical limits are durable (`15 §7`). A `429` carries `Retry-After`.
 | ID | Decision | Rationale |
 |---|---|---|
 | D-18-01 | No REST endpoint touches live table state | Removes REST from the privacy audit and avoids a second path to state with no ordering guarantee. |
-| D-18-02 | Fourteen endpoints, and the surface fits on a page | A small API is one whose authorization can be reasoned about completely. |
+| D-18-02 | Twenty endpoints, and the surface fits on a page | A small API is one whose authorization can be reasoned about completely. The count was corrected from the original "fourteen" (`§1`, `33_API §1`), which undercounted `§4.3`'s six administrative endpoints from ratification onward; `POST /sessions/mfa` (`ADR-0017`) is the one genuinely new addition. |
 | D-18-03 | `404` where existence is sensitive | `403` confirms existence; uniform `404` prevents enumeration. |
 | D-18-04 | Registration returns `201` for a duplicate email and notifies the existing address | Prevents account enumeration while still informing the real owner. |
 | D-18-05 | Join code returned exactly once, stored irreversibly | A database read yields no usable codes, with one bounded exception: `D-18-11`. |
@@ -178,6 +180,7 @@ Security-critical limits are durable (`15 §7`). A `429` carries `Retry-After`.
 | D-18-09 | Closed error-code catalog; clients branch on `code`, never on `message` | Messages are for humans and will change. |
 | D-18-10 | `Idempotency-Key` only where a duplicate would create a resource | Table and account creation; everywhere else the operation is naturally idempotent. Implemented for `POST /tables` (`17 §5.12`); `POST /accounts` remains an open gap, mitigated in the interim by `D-18-04`'s duplicate-email handling. |
 | D-18-11 | A cached `POST /tables` replay may return the plaintext `join_code` again, within a 10-minute window | The client `D-18-10` exists to serve is exactly the one that created the table but never received the code — refusing to replay it would leave that client with no path to its own resource. Bounded by `expires_at` on `idempotency_keys` (`17 §5.12`), not by convention. |
+| D-18-12 | `POST /sessions/mfa` verifies the existing session rather than being folded into `POST /sessions` | The session is already this system's durable unit of authorization (`15 §4.3`); a second, narrow action on it needs no new session or token type. `ADR-0017`. |
 
 ---
 
@@ -192,6 +195,8 @@ Security-critical limits are durable (`15 §7`). A `429` carries `Retry-After`.
 | `403` for forbidden tables | Confirms existence. |
 | Distinguishing duplicate-email at registration | Account enumeration. |
 | A public table listing with filters | Discovery the product does not need, and an enumeration surface. |
+| Folding the TOTP code into `POST /sessions` itself | Would require the client to prompt for a code before knowing whether the account even has one; verifying the existing session separately needs no such guess (`D-18-12`, `ADR-0017`). |
+| A self-service TOTP enrollment endpoint | Leaves the account unprotected between creation and first login (`15 §8.2`, `ADR-0017`). |
 
 ---
 
@@ -221,13 +226,16 @@ fallback would be a second privacy-relevant serialization path, and such network
 | Join codes brute-forced | Rate limits, uniform `404`, short validity (`15 §7.2`) |
 | Error messages leak internal detail | `500` carries a correlation identifier only; codes come from a closed catalog |
 | The `idempotency_keys` replay cache outlives its purpose | 10-minute `expires_at`; no `app_readonly` grant; no endpoint ever reads it back to a human (`17 §5.12`, `D-18-11`) |
+| A TOTP code brute-forced against `POST /sessions/mfa` | Durable, progressive per-account lockout, tracked separately from password lockout (`17 §5.1`, `D-17-16`) |
 
 ---
 
 ## 11. Future Considerations
 
 Not committed: email change with verification; account deletion with immediate purge; per-table
-invitations as an alternative to a shared code; an operator-only capacity report.
+invitations as an alternative to a shared code; an operator-only capacity report; a second
+step-up-verification endpoint for a hardware authenticator, alongside `POST /sessions/mfa`
+(`15 §15`, `ADR-0017`).
 
 ---
 
@@ -250,3 +258,4 @@ invitations as an alternative to a shared code; an operator-only capacity report
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial catalog: 14 endpoints |
 | 0.2 | 2026-09-03 | Design (architect role), owner-approved | `D-18-10` implemented for `POST /tables`; added `D-18-11` (the bounded join-code replay exception) and its risk |
+| 0.3 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: added `POST /sessions/mfa`; `D-18-12`; corrected the endpoint count from 14 to 20 (`§1`, `D-18-02`) |

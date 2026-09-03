@@ -5,7 +5,7 @@
 | **Project** | American Mahjong Dealer |
 | **Document** | REQUIREMENTS_TRACEABILITY_MATRIX.md |
 | **Status** | Normative — binding on all implementation |
-| **Last Updated** | 2026-09-02 |
+| **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the mapping from every requirement to its design document, component, and tests. Does **not** own the requirements themselves (`docs/01`, `SCOPE_BOUNDARIES.md`, `SECURITY_REQUIREMENTS_MATRIX.md`). |
 
 ---
@@ -80,6 +80,7 @@ Short names used throughout:
 | FR-148 | `docs/22 §8` | — **absence** | `TC-A08` | AC-012 |
 | FR-160 – FR-166 | `docs/04 §3.3`, `docs/18 §4.3`, `docs/28 §3` | `admin` | `TC-S15` | AC-017 |
 | FR-164 | `docs/04 §3.3` | — **absence** | `TC-P02` | AC-010 |
+| FR-167 | `docs/15 §8.1`, `ADR-0017` | `auth`, `admin` | `TC-S05` | AC-017 |
 
 Rows marked **absence** in the Component column are requirements satisfied by something not being
 built. They still have designs, tests, and acceptance criteria.
@@ -168,7 +169,7 @@ The backward direction. If a component is doing something not listed here, ask w
 | `actor` | Command pipeline (`FR-075`, `NFR-021`–`NFR-023`); turn (`FR-076`–`FR-077`); pass rounds (`FR-090`–`FR-098`); conclusion (`FR-110`–`FR-118`); correction (`FR-120`–`FR-127`); pause (`FR-142`, `FR-146`); `SEC-04x` |
 | `gateway` | Binding (`SEC-024`–`SEC-028`); framing (`NFR-022`); backpressure; heartbeats (`NFR-020`); resumption (`FR-145`, `NFR-008`); revocation (`NFR-026`) |
 | `persist` | Checkpoints (`NFR-030`–`NFR-032`); event log (`FR-125`); purge (`FR-118`, `NFR-013`); encryption (`NFR-012`) |
-| `admin` | `FR-160`–`FR-166`; `SEC-08x` |
+| `admin` | `FR-160`–`FR-167`; `SEC-08x` |
 | `obs` | `NFR-011`; `SEC-07x` |
 | `web` | Interaction (`FR-100`–`FR-105`, `NFR-001`–`NFR-003`); rendering; accessibility (`NFR-050`–`NFR-053`) |
 | `db` | Constraints (`FR-024`, `SEC-026`); encryption (`NFR-012`); privilege (`SEC-035`); append-only (`SEC-082`) |
@@ -246,3 +247,4 @@ untraced requirement blocks it (`DEFINITION_OF_DONE.md §4`).
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 0.1 | 2026-09-02 | Design (architect role), owner-approved | Initial matrix: 303 requirements traced, both directions |
+| 0.2 | 2026-09-03 | Design (architect role), owner-approved | Added `FR-167` (`ADR-0017`) to the `admin`/`auth` traces |

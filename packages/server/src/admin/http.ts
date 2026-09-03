@@ -1,13 +1,13 @@
 // The REST surface for administration (docs/18_API_Design.md §4.3,
-// docs/33_API/REST_Endpoint_Catalog.md) — the 5 endpoints of that
+// docs/33_API/REST_Endpoint_Catalog.md) — the 6 endpoints of that
 // catalog's administrative surface. Thin: every handler validates its own
 // request shape, then delegates to `AdminService`. Session/CSRF
 // verification reuses `session-guard.ts`'s `requireAdmin`/`requireCsrf`,
 // the same discipline `auth/http.ts` and `tables/http.ts` already follow.
 //
-// Known gap, inherited from `requireAdmin`'s own doc comment: every
-// endpoint here requires "session + second factor" per docs/18 §4.3, and
-// only the session half is enforced — see that function for why.
+// Every endpoint here requires "session + second factor" per docs/18
+// §4.3 — enforced entirely inside `requireAdmin` (session, role, and
+// `mfa_verified_at`, `ADR-0017`), so nothing below has to know about it.
 import type { FastifyInstance } from "fastify";
 import type { AccountStatus } from "@mahjong-dealer/db";
 import type { AuthService } from "../auth/service.js";

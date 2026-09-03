@@ -7,6 +7,7 @@ import { Administration } from "./screens/Administration.js";
 import { Help } from "./screens/Help.js";
 import { Home } from "./screens/Home.js";
 import { Login } from "./screens/Login.js";
+import { MfaVerify } from "./screens/MfaVerify.js";
 import { Register } from "./screens/Register.js";
 import { Table } from "./screens/Table.js";
 import { Welcome } from "./screens/Welcome.js";
@@ -21,6 +22,7 @@ export function App() {
             <Route path="/" element={<Welcome />} />
             <Route path="/register" element={<Register />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/mfa" element={<MfaVerify />} />
             <Route path="/home" element={<Home />} />
             <Route path="/account" element={<Account />} />
             <Route path="/help" element={<Help />} />
