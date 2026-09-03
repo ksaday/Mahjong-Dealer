@@ -33,7 +33,7 @@ export class TicketStore {
   private readonly tickets = new Map<string, StoredTicket>();
 
   constructor(
-    private readonly ttlMs: number = DEFAULT_TTL_MS,
+    readonly ttlMs: number = DEFAULT_TTL_MS,
     private readonly now: () => number = Date.now,
   ) {}
 

@@ -83,6 +83,11 @@ export class TableGateway {
     return this.connections.get(seat);
   }
 
+  /** Whether a seat currently has a bound connection — `GET /tables/mine`'s `connected` field (docs/33_API §4.2). */
+  isConnected(seat: Seat): boolean {
+    return this.connections.has(seat);
+  }
+
   acceptConnection(socket: SocketLike): ConnectionHandle {
     const connectedAt = this.now();
     let connection: Connection | null = null;

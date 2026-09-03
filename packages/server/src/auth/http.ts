@@ -1,30 +1,27 @@
 // The REST surface for accounts and sessions (docs/18_API_Design.md §4.1;
-// docs/33_API/REST_Endpoint_Catalog.md §3) — 8 of that catalog's endpoints.
-// Thin: every handler validates its own request shape, then delegates to
-// `AuthService`. No table, admin, or health endpoint is implemented here
-// (docs/18 §4.2, §4.3) — those need the table actor's REST-facing half
-// (create/join/connect-ticket) and the administrative surface, neither
-// built yet.
+// docs/33_API/REST_Endpoint_Catalog.md §3) — 8 of that catalog's
+// endpoints. Thin: every handler validates its own request shape, then
+// delegates to `AuthService`. The five table endpoints are `tables/http.ts`
+// (docs/18 §4.2); the administrative surface (docs/18 §4.3) is not built.
+// Session/CSRF verification is shared with that module via
+// `session-guard.ts`.
 //
 // Scope note: `POST /accounts/me/password`'s own durable per-account rate
 // limit (docs/18 §6: 3/hour) is not implemented — there is no schema
 // column for it yet (docs/17 §5.1 has none), unlike login's
 // failed_logins/locked_until. Flagged rather than silently skipped.
 import cookie from "@fastify/cookie";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { TokenBucket } from "../gateway/rate-limit.js";
-import { verifyCsrf } from "./csrf.js";
-import type { AuthenticatedSession, AuthService } from "./service.js";
-
-const SESSION_COOKIE = "__Host-session";
-const CSRF_COOKIE = "__Host-csrf";
-const CSRF_HEADER = "x-csrf-token";
-
-declare module "fastify" {
-  interface FastifyRequest {
-    authSession?: AuthenticatedSession;
-  }
-}
+import {
+  clientIp,
+  CSRF_COOKIE,
+  errorBody,
+  requireCsrf,
+  requireSession,
+  SESSION_COOKIE,
+} from "./session-guard.js";
+import type { AuthService } from "./service.js";
 
 export interface AuthRoutesOptions {
   readonly authService: AuthService;
@@ -32,14 +29,6 @@ export interface AuthRoutesOptions {
   readonly registrationLimiterFactory?: () => TokenBucket;
   /** 20/min per address (docs/18 §6) — the durable 5/min-per-account limit lives in AuthService via lockout.ts. */
   readonly loginLimiterFactory?: () => TokenBucket;
-}
-
-function errorBody(code: string, message: string): { error: { code: string; message: string } } {
-  return { error: { code, message } };
-}
-
-function clientIp(request: FastifyRequest): string {
-  return request.ip;
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOptions): void {
@@ -59,35 +48,6 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   }
 
   app.register(cookie);
-
-  async function requireSession(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-    const token = request.cookies[SESSION_COOKIE];
-    if (token === undefined) {
-      await reply.code(401).send(errorBody("NOT_AUTHENTICATED", "No valid session."));
-      return false;
-    }
-    const authenticated = await authService.validateSession(token);
-    if (authenticated === null) {
-      await reply.code(401).send(errorBody("NOT_AUTHENTICATED", "No valid session."));
-      return false;
-    }
-    request.authSession = authenticated;
-    return true;
-  }
-
-  /** CSRF applies only to authenticated, state-changing requests (docs/15 §4.2) — nothing to protect before a session exists. */
-  async function requireCsrf(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-    const session = request.authSession;
-    if (session === undefined) {
-      await reply.code(401).send(errorBody("NOT_AUTHENTICATED", "No valid session."));
-      return false;
-    }
-    if (!verifyCsrf(session.session.csrf_secret, request.headers[CSRF_HEADER])) {
-      await reply.code(403).send(errorBody("CSRF_INVALID", "Missing or invalid anti-forgery token."));
-      return false;
-    }
-    return true;
-  }
 
   app.post("/api/v1/accounts", async (request, reply) => {
     const ip = clientIp(request);
@@ -147,7 +107,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   });
 
   app.delete("/api/v1/sessions/current", async (request, reply) => {
-    if (!(await requireSession(request, reply))) return;
+    if (!(await requireSession(authService, request, reply))) return;
     if (!(await requireCsrf(request, reply))) return;
     await authService.logout(request.authSession!.session.id);
     clearSessionCookies(reply);
@@ -155,7 +115,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   });
 
   app.get("/api/v1/accounts/me", async (request, reply) => {
-    if (!(await requireSession(request, reply))) return;
+    if (!(await requireSession(authService, request, reply))) return;
     const { account } = request.authSession!;
     await reply.code(200).send({
       account_id: account.id,
@@ -167,7 +127,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   });
 
   app.patch("/api/v1/accounts/me", async (request, reply) => {
-    if (!(await requireSession(request, reply))) return;
+    if (!(await requireSession(authService, request, reply))) return;
     if (!(await requireCsrf(request, reply))) return;
     const body = request.body as Partial<{ display_name: string }>;
     if (body.display_name !== undefined) {
@@ -181,7 +141,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   });
 
   app.post("/api/v1/accounts/me/password", async (request, reply) => {
-    if (!(await requireSession(request, reply))) return;
+    if (!(await requireSession(authService, request, reply))) return;
     if (!(await requireCsrf(request, reply))) return;
     const body = request.body as Partial<{ current_password: string; new_password: string }>;
     if (typeof body.current_password !== "string" || typeof body.new_password !== "string") {
@@ -204,7 +164,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   });
 
   app.get("/api/v1/accounts/me/sessions", async (request, reply) => {
-    if (!(await requireSession(request, reply))) return;
+    if (!(await requireSession(authService, request, reply))) return;
     const session = request.authSession!;
     const sessions = await authService.listSessions(session.account.id);
     await reply.code(200).send({
@@ -220,7 +180,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
   });
 
   app.delete<{ Params: { id: string } }>("/api/v1/accounts/me/sessions/:id", async (request, reply) => {
-    if (!(await requireSession(request, reply))) return;
+    if (!(await requireSession(authService, request, reply))) return;
     if (!(await requireCsrf(request, reply))) return;
     const revoked = await authService.revokeOwnSession(request.authSession!.account.id, request.params.id);
     if (!revoked) {

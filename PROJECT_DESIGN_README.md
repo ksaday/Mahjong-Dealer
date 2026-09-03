@@ -8,7 +8,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | PROJECT_DESIGN_README.md |
-| **Status** | Design complete — implementation underway (Phase 0-2 complete; Phase 3's schema and auth, Phase 4's table actor, and Phase 5's gateway started) |
+| **Status** | Design complete — implementation underway (Phase 0-3 complete; Phase 4's table actor, now including its REST surface, and Phase 5's gateway started) |
 | **Last Updated** | 2026-09-02 |
 | **Role in SSOT** | Entry point and map. Owns no architectural decision of its own; every statement here is a summary of a decision owned by a numbered chapter or an ADR. If this file and a chapter disagree, **the chapter wins**. |
 
@@ -518,7 +518,44 @@ differently from a genuine one and quietly defeated the timing equalization it e
 computing it once, for real, from an actual call to the hashing function, rather than typing out a
 plausible-looking constant.
 
-235 tests passing overall. No client code exists yet.
+**Phase 4's table actor now has its REST-facing half**, in `server/src/tables/`
+(`docs/33_API/REST_Endpoint_Catalog.md §4`): the remaining 5 of the catalog's 14 endpoints —
+`POST /tables`, `POST /tables/join`, `GET /tables/mine`, `DELETE /tables/{id}`, and
+`POST /tables/{id}/connect-ticket` — bringing the REST surface to 13 endpoints (only the 6-endpoint
+administrative half, Phase 7 territory, remains against the 19-by-direct-count total flagged above).
+
+A `TableManager` holds one live `TableActor`/`TicketStore`/`TableGateway` triple per table in a plain
+`Map`, keyed by table id — the same "exactly one process owns a table" reasoning `owner_node`
+(`docs/17 §5.4`) already encodes, so no lookup service is needed. `TableService` follows the actor's
+own direction of truth: it mutates the live `TableActor` first (`occupySeat`, the actor's own
+`close_table` command), and only on success mirrors the result into a new `TableRepository`
+(`tables`/`table_seats`, `docs/17 §5.4`, §5.5) — never the other way around, so the durable rows can
+never show a seat the actor itself refused to grant. Join codes (`codes.ts`) use the 32-character,
+visually-unambiguous alphabet `docs/15 §7.2` specifies, generated with the platform's CSPRNG and, like
+a session token, stored only as a SHA-256 hash (`D-17-07`). A full table on `POST /tables/join` is
+folded into the same uniform `404` as a wrong code or an unknown table (`docs/18 §4.2`) rather than a
+distinguishable `TABLE_FULL` — deliberately, so the failure reveals nothing. `GET /tables/mine`'s
+`connected` field reuses a small new `TableGateway.isConnected` query against the same connection map
+`bind`/`resume` already populate.
+
+The CSRF/session double-submit check that guarded only `auth/http.ts`'s own routes was pulled out
+into `auth/session-guard.ts` so this second route module authenticates state-changing requests the
+same way rather than a second, divergent implementation of a security-critical comparison.
+
+Not built: the live table registry's crash-recovery reconstruction from a checkpoint (docs/29) — a
+table created in an earlier process lifetime is invisible to a restarted process's `TableManager`,
+which this slice flags rather than papers over; `Idempotency-Key` on `POST /tables` (`D-18-10`); and,
+as before, `postgres-repository.ts`'s table-facing counterpart is written against the schema but not
+exercised against a live database, for the same reason the auth one isn't.
+
+One bug worth naming here too: an early version of the `GET /tables/mine` test built `AuthService`
+and `TableService` against two *separate* `InMemoryAccountRepository` instances, so a seated guest's
+display name — resolved by `TableService` against the accounts store — never resolved, because the
+account had only ever been written into the auth side's copy. Fixed by sharing one repository
+instance between both services, which is also now a wiring note on `TableService` itself: in
+production this means one `AccountRepository` (one connection pool), not two.
+
+266 tests passing overall. No client code exists yet.
 
 ---
 

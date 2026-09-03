@@ -1,8 +1,11 @@
-// Phases 3-5 (IMPLEMENTATION_READINESS_CHECKLIST.md §6): table/admin HTTP
-// routes, checkpointing. The per-table actor (Phase 4), the socket gateway
-// (Phase 5), and the accounts/sessions half of auth (Phase 3) are in
-// place; see table/actor.ts, gateway/gateway.ts, and auth/service.ts's
-// module comments for their scope.
+// Phases 3-5 (IMPLEMENTATION_READINESS_CHECKLIST.md §6): the per-table
+// actor (Phase 4), the socket gateway (Phase 5), accounts/sessions
+// (Phase 3's auth half), and the table REST surface (Phase 3's other
+// half, docs/33_API §4) are in place. Not built: the administrative
+// surface (docs/33_API §5) and the live table registry's crash-recovery
+// reconstruction from a checkpoint (see tables/manager.ts's module
+// comment). See table/actor.ts, gateway/gateway.ts, auth/service.ts, and
+// tables/service.ts's module comments for scope detail.
 
 export type { ActorFrame, ActorSnapshot, SubmitOutcome, TableActorOptions } from "./table/actor.js";
 export { TableActor } from "./table/actor.js";
@@ -63,3 +66,37 @@ export type {
 } from "./auth/service.js";
 export { registerAuthRoutes } from "./auth/http.js";
 export type { AuthRoutesOptions } from "./auth/http.js";
+export {
+  clientIp,
+  CSRF_COOKIE,
+  CSRF_HEADER,
+  errorBody,
+  requireCsrf,
+  requireSession,
+  SESSION_COOKIE,
+} from "./auth/session-guard.js";
+
+export { CryptoEntropy } from "./entropy.js";
+
+export { generateJoinCode, hashJoinCode } from "./tables/codes.js";
+export { TableManager } from "./tables/manager.js";
+export type { LiveTable } from "./tables/manager.js";
+export type {
+  NewTableRow,
+  SeatAssignment,
+  TableRepository,
+} from "./tables/repository.js";
+export { InMemoryTableRepository } from "./tables/memory-repository.js";
+export { PostgresTableRepository } from "./tables/postgres-repository.js";
+export { TableService } from "./tables/service.js";
+export type {
+  CloseTableResult,
+  ConnectTicketResult,
+  CreateTableResult,
+  JoinTableResult,
+  MineSeatSummary,
+  MineTableSummary,
+  TableServiceOptions,
+} from "./tables/service.js";
+export { registerTableRoutes } from "./tables/http.js";
+export type { TableRoutesOptions } from "./tables/http.js";

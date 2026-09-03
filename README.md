@@ -128,7 +128,7 @@ append-only triggers on the event and audit logs, and column-level `REVOKE`/`GRA
 general application role `SELECT` on either encrypted `private_state` column — plus a UUIDv7
 generator and a minimal migration runner (plain SQL rather than an ORM, so that DDL stays exact).
 Registration, login, and session issuance — the rest of Phase 3 — are `server`'s job against this
-schema, not yet built.
+schema; see below.
 
 Phase 5's gateway is in `server`: binding (single-use connect tickets, one connection per seat, bind
 deadline), the full `docs/13_Input_Integrity.md §9` command pipeline (`cseq` sequencing, rate
@@ -144,7 +144,20 @@ hashing with a server-side pepper, durable per-account lockout (`accounts.failed
 CSRF, and 8 of the 14 REST endpoints in `docs/33_API/REST_Endpoint_Catalog.md §3` (accounts and
 sessions), wired up with Fastify and tested both as pure business logic (an in-memory repository) and
 end-to-end over real HTTP (Fastify's `inject()`). Not built: heartbeat scheduling and session-
-revocation polling on the gateway side (both need a real timer loop this slice doesn't add), the
-table and admin REST endpoints, and — like `db`'s own migrations — the Postgres-backed repository is
-written but not exercised against a live database. 235 tests passing overall. Still nothing in
-`web`.
+revocation polling on the gateway side (both need a real timer loop this slice doesn't add), and —
+like `db`'s own migrations — the Postgres-backed repository is written but not exercised against a
+live database.
+
+The table half of that same REST catalog is now in `server/src/tables/`: the remaining 5 endpoints —
+create, join, list mine, close, and connect-ticket — backed by a `TableManager` that holds one live
+`TableActor` per table in a plain `Map` (one process owns a table, per `owner_node`, `docs/17 §5.4`)
+and a `TableRepository` that mirrors the actor's own seat state into `tables`/`table_seats` only
+after the actor itself accepts a seating change, never independently of it. Join codes use the
+32-character unambiguous alphabet `docs/15 §7.2` specifies and are stored only as a SHA-256 hash,
+like a session token; a full table on `POST /tables/join` gets the same uniform `404` as a wrong
+code, per `docs/18 §4.2`, not a distinguishable rejection. The CSRF/session check `auth/http.ts` used
+privately is now `auth/session-guard.ts`, shared by both route modules rather than duplicated. Not
+built: reconstructing a table's live actor from its checkpoint after a restart (the in-memory
+registry only knows about tables created during its own process's lifetime), `Idempotency-Key` on
+table creation, the admin REST endpoints, and, again, a live-database exercise of the Postgres
+repository. 266 tests passing overall. Still nothing in `web`.
