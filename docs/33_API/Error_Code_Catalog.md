@@ -74,6 +74,7 @@ lost frames cannot be trusted to be coherent (`13 §5.1`).
 | 4008 | `PROTOCOL_VIOLATION` | Malformed frame, `cseq` gap, or a frame in the wrong state | Client defect; report; do not retry blindly |
 | 4009 | `RATE_LIMITED` | 20 consecutive throttles | Back off substantially, then reconnect |
 | 4010 | `SLOW_CONSUMER` | Backpressure threshold exceeded | Reconnect with backoff |
+| 4011 | `SEAT_VACATED` | This connection's own seat was vacated (`leaveSeat`, FR-025) | **Do not reconnect.** Return to the lobby — this seat may already belong to someone else |
 | 1012 | `SERVICE_RESTART` | Planned restart | Reconnect with backoff **and jitter** |
 | — | Transport loss | Network | Reconnect with backoff and jitter |
 
@@ -86,8 +87,11 @@ delay = min(30s, 1s × 2^attempt) × (0.5 + random × 0.5)
 Jitter is not optional (`CO-7`): a restart disconnects four clients simultaneously, and without
 jitter they reconnect in lockstep and do it again on the next failure.
 
-`4003` is the one code that must **not** trigger a reconnection. Reconnecting would displace the
-connection that displaced this one, and two tabs would fight indefinitely.
+`4003` and `4011` are the two codes that must **not** trigger a reconnection. Reconnecting on `4003`
+would displace the connection that displaced this one, and two tabs would fight indefinitely.
+Reconnecting on `4011` would mint a ticket for a seat this account no longer holds — the ticket
+issuer resolves the caller's *current* seat, which after a leave is none, so the reconnect attempt
+itself would fail; showing the lobby immediately is simpler and no less correct.
 
 ---
 

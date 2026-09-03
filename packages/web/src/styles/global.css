@@ -413,6 +413,14 @@ button.tile {
   padding-bottom: var(--space-2);
 }
 
+.tile-drag-wrap {
+  display: inline-flex;
+}
+
+.tile-dragging {
+  opacity: 0.5;
+}
+
 .table-controls {
   display: flex;
   flex-direction: column;

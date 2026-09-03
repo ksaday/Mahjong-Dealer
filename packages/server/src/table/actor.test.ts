@@ -221,6 +221,26 @@ describe("correction — actor-seq translation (docs/05 §8; the reconciliation 
     expect(state.locations.wall).toHaveLength(99); // the draw was undone
   });
 
+  it("CorrectionProposed's affectedActions describes, in public terms, what would be undone (docs/19 §6.6)", () => {
+    const harness = TableHarness.create({ seed: 7 });
+    readyAllAndDeal(harness);
+    const rewindTarget = harness.seqNumber();
+
+    const state = harness.state();
+    if (state.lifecycle !== "in_play") throw new Error("unreachable");
+    const tile = state.locations.hands.east[0]!;
+    harness.seat("east").send("discard_tile", { handle: tile });
+    harness.seat("north").send("claim_discard", { handle: tile });
+
+    harness.seat("south").send("propose_correction", { rewindTo: rewindTarget });
+
+    const proposed = harness.frames("south").find((f) => f.kind === "event" && f.ev.type === "CorrectionProposed");
+    expect(proposed?.kind === "event" && proposed.ev.type === "CorrectionProposed" && proposed.ev.affectedActions).toEqual([
+      "East discarded",
+      "North claimed the discard",
+    ]);
+  });
+
   it("rejects a rewindTo with no matching checkpoint", () => {
     const harness = TableHarness.create({ seed: 1 });
     readyAllAndDeal(harness);

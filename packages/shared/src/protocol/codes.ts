@@ -32,6 +32,7 @@ export const CLOSE_CODES = [
   { code: 4008, name: "PROTOCOL_VIOLATION" },
   { code: 4009, name: "RATE_LIMITED" },
   { code: 4010, name: "SLOW_CONSUMER" },
+  { code: 4011, name: "SEAT_VACATED" },
   { code: 1012, name: "SERVICE_RESTART" },
 ] as const;
 export type CloseCodeName = (typeof CLOSE_CODES)[number]["name"];

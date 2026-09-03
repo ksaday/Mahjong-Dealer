@@ -5,11 +5,22 @@
 // Scoped simplifications, flagged rather than silently narrowed (matching
 // this codebase's own convention — see `screens/Table.tsx`'s header
 // comment and `ws/useTableLive.ts`'s):
-//   - Drag gestures (discard-by-drag, expose-by-drag) are not implemented.
-//     Every binding act here goes through the keyboard/click arm-and-
-//     confirm path Interaction_Patterns §2.2 already requires for those
-//     acts on non-pointer input, so nothing is unreachable — dragging is
-//     simply not an additional path yet.
+//   - Drag gestures for the *binding* acts (discard-by-drag, expose-by-
+//     drag) are not implemented. Every binding act here goes through the
+//     keyboard/click arm-and-confirm path Interaction_Patterns §2.2
+//     already requires for those acts on non-pointer input, so nothing is
+//     unreachable — dragging is simply not an additional path yet.
+//   - Rack reorder (the one *free* act, docs/11 §5.1/§6, FR-100/FR-105) is
+//     implemented: drag within the rack, or, matching docs/24_Accessibility
+//     §5.2's `Alt+←/→` binding, select exactly one tile and press
+//     `Alt+←`/`Alt+→`. That key binding is defined there against a
+//     region-and-focus keyboard model this file doesn't otherwise build
+//     (there is no separate rack "focus" independent of `selected`), so
+//     it is adapted onto the single-selected tile rather than a focused
+//     one — a narrower but still fully keyboard-reachable stand-in.
+//     Applied locally first, then sent — `arrange_hand` broadcasts
+//     nothing (docs/10 §5.7), so the server's own view of the order only
+//     catches up on the next unrelated event.
 //   - "Click elsewhere cancels" (§2.1) is not wired; Escape cancels an
 //     armed act, and so does clicking Cancel.
 //   - Mechanical disabling only accounts for game state, the turn
@@ -55,6 +66,16 @@ export interface GameTableProps {
 
 let chatKeySeq = 0;
 
+function ownTileHandles(view: WireSeatView): readonly TileHandle[] {
+  return view.ownHand.filter((e): e is { readonly handle: TileHandle; readonly tile: Face } => !("gap" in e)).map((e) => e.handle);
+}
+
+function sameHandleSet(a: readonly TileHandle[], b: readonly TileHandle[]): boolean {
+  if (a.length !== b.length) return false;
+  const bSet = new Set(b);
+  return a.every((h) => bSet.has(h));
+}
+
 export function GameTable({ view, send, lastEvent, onReturnToLobby }: GameTableProps) {
   const [selected, setSelected] = useState<ReadonlySet<TileHandle>>(new Set());
   const [armed, setArmed] = useState<Armed | null>(null);
@@ -63,6 +84,8 @@ export function GameTable({ view, send, lastEvent, onReturnToLobby }: GameTableP
   const [lastPause, setLastPause] = useState<{ readonly seat: Seat; readonly reason: string } | null>(null);
   const [concludedOutcome, setConcludedOutcome] = useState<string | null>(null);
   const [correctionInput, setCorrectionInput] = useState("");
+  const [handOrder, setHandOrder] = useState<readonly TileHandle[]>(() => ownTileHandles(view));
+  const [draggingHandle, setDraggingHandle] = useState<TileHandle | null>(null);
   const seenSeq = useRef<number>(-1);
 
   useEffect(() => {
@@ -82,6 +105,46 @@ export function GameTable({ view, send, lastEvent, onReturnToLobby }: GameTableP
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [armed]);
+
+  // Adopt the server's own order only once the *set* of held handles
+  // changes (a draw, discard, claim, expose, retract, or pass) — never on
+  // an unrelated broadcast, and never by re-adopting our own unacknowledged
+  // rearrangement once `arrange_hand`'s silent round trip catches up
+  // (docs/10 §5.7; the reconciled set is identical either way, so there is
+  // nothing to adopt).
+  useEffect(() => {
+    const serverHandles = ownTileHandles(view);
+    setHandOrder((prev) => (sameHandleSet(prev, serverHandles) ? prev : serverHandles));
+  }, [view]);
+
+  // The one free act (docs/11 §5.2, FR-105): applied to local state before
+  // the command is even sent, and never blocked by `armed`.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent): void {
+      if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      if (selected.size !== 1) return;
+      const handle = [...selected][0];
+      if (handle === undefined) return;
+      const from = handOrder.indexOf(handle);
+      if (from === -1) return;
+      const to = e.key === "ArrowLeft" ? from - 1 : from + 1;
+      if (to < 0 || to >= handOrder.length) return;
+      e.preventDefault();
+      reorderHand(from, to);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selected, handOrder]);
+
+  function reorderHand(from: number, to: number): void {
+    if (from === to) return;
+    const next = [...handOrder];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    setHandOrder(next);
+    send("arrange_hand", { handles: next });
+  }
 
   function handleEvent(ev: TableEvent): void {
     if (ev.type === "TableMessage") {
@@ -347,20 +410,50 @@ export function GameTable({ view, send, lastEvent, onReturnToLobby }: GameTableP
           {ownTurn && <span className="visually-hidden">, your turn</span>}
         </p>
         <div className="own-rack" role="list" aria-label="Your hand">
-          {view.ownHand.map((entry, i) =>
-            "gap" in entry ? (
-              <TileGap key={`gap-${i}`} />
-            ) : (
-              <Tile
-                key={entry.handle}
-                face={entry.tile}
-                selected={selected.has(entry.handle)}
-                interactive={armed === null}
-                positionLabel={`position ${i + 1} of ${view.ownHand.length}`}
-                onActivate={() => toggleSelected(entry.handle)}
-              />
-            ),
-          )}
+          {(() => {
+            // `handOrder` carries only tiles (the drag/keyboard reorder
+            // target — `arrange_hand`'s `handles` has no room for a gap,
+            // §5.7's own permutation check would reject one). Gaps, on the
+            // rare frame `view.ownHand` actually carries one, stay pinned
+            // at the slot the server placed them in; tiles fill the
+            // remaining slots in `handOrder`'s order.
+            const faceByHandle = new Map(view.ownHand.filter((e): e is { readonly handle: TileHandle; readonly tile: Face } => !("gap" in e)).map((e) => [e.handle, e.tile]));
+            let tileIndex = 0;
+            return view.ownHand.map((slot, i) => {
+              if ("gap" in slot) return <TileGap key={`gap-${i}`} />;
+              const handle = handOrder[tileIndex] ?? slot.handle;
+              const face = faceByHandle.get(handle);
+              const myTileIndex = tileIndex;
+              tileIndex += 1;
+              if (face === undefined) return null; // mid-resync: the next `view` will drop this handle from `handOrder` too
+              return (
+                <div
+                  key={handle}
+                  className={draggingHandle === handle ? "tile-drag-wrap tile-dragging" : "tile-drag-wrap"}
+                  draggable={armed === null}
+                  onDragStart={() => setDraggingHandle(handle)}
+                  onDragEnd={() => setDraggingHandle(null)}
+                  onDragOver={(e) => {
+                    if (draggingHandle !== null) e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggingHandle === null || draggingHandle === handle) return;
+                    reorderHand(handOrder.indexOf(draggingHandle), myTileIndex);
+                    setDraggingHandle(null);
+                  }}
+                >
+                  <Tile
+                    face={face}
+                    selected={selected.has(handle)}
+                    interactive={armed === null}
+                    positionLabel={`position ${i + 1} of ${view.ownHand.length}`}
+                    onActivate={() => toggleSelected(handle)}
+                  />
+                </div>
+              );
+            });
+          })()}
         </div>
       </div>
 

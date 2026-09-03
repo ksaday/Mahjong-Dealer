@@ -13,6 +13,7 @@ import { InMemoryGamesRepository } from "./memory-games-repository.js";
 import { InMemoryTableRepository } from "./memory-repository.js";
 import { TableManager } from "./manager.js";
 import type { SeatAssignment } from "./repository.js";
+import { TableService } from "./service.js";
 
 async function seedTableAndAccounts(tables: InMemoryTableRepository, accounts: InMemoryAccountRepository) {
   const accountBySeat: Record<Seat, string> = {} as Record<Seat, string>;
@@ -203,6 +204,39 @@ describe("TableManager.restoreLiveTables", () => {
     expect(live!.actor.gameStateSnapshot.lifecycle).toBe("idle");
     expect(live!.actor.currentGameId).toBeNull();
     expect(live!.actor.tableSnapshot.seats.south.occupant).not.toBeNull();
+  });
+
+  it("keeps the reassigned host correct across a restart when the host leaves before any game starts (FR-025)", async () => {
+    const tables = new InMemoryTableRepository();
+    const accounts = new InMemoryAccountRepository();
+    const games = new InMemoryGamesRepository();
+    const checkpoints = new InMemoryCheckpointRepository();
+    const correctionCheckpoints = new InMemoryCorrectionCheckpointRepository();
+    const checkpointWriter = new CheckpointWriter(checkpoints, games, randomBytes(32), correctionCheckpoints);
+    const accountBySeat = await seedTableAndAccounts(tables, accounts);
+
+    const before = new TableManager(createDeterministicEntropy(1), undefined, checkpointWriter);
+    before.create("t1");
+    const beforeLive = before.get("t1");
+    if (beforeLive === undefined) throw new Error("unreachable");
+    for (const seat of SEAT_ORDER) {
+      const occupied = beforeLive.actor.occupySeat(accountBySeat[seat], seat);
+      if (!occupied.ok) throw new Error(`unreachable: ${occupied.code}`);
+    }
+
+    // `seedTableAndAccounts` names "east" the host directly in the repository row;
+    // leaving via `TableService` (not the actor alone) is what mirrors the
+    // in-memory reassignment (`nextOccupiedHost`) back into `host_account_id`.
+    const service = new TableService({ tables, accounts, manager: before, idFactory: () => "unused" });
+    const left = await service.leaveSeat(accountBySeat.east, "t1");
+    expect(left).toEqual({ ok: true });
+
+    const after = new TableManager(createDeterministicEntropy(99), undefined, checkpointWriter);
+    await after.restoreLiveTables({ tables, accounts, games, checkpointWriter });
+    const afterLive = after.get("t1");
+
+    expect(afterLive).toBeDefined();
+    expect(afterLive!.actor.tableSnapshot.host).toBe("south"); // nextOccupiedHost from "east"
   });
 
   it("does not restore a closed table", async () => {

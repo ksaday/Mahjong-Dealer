@@ -52,6 +52,17 @@ describe("register (docs/33_API POST /accounts)", () => {
     const after = await accounts.findByEmail("carol@example.com");
     expect(after?.display_name).toBe(before?.display_name); // unchanged — no account was actually created/altered
   });
+
+  it("never returns the real account's own id for a duplicate email — that id's embedded UUIDv7 timestamp would leak when the account was created", async () => {
+    const { service, accounts } = setUp();
+    await service.register("dana@example.com", "correct horse battery", "Dana");
+    const real = await accounts.findByEmail("dana@example.com");
+
+    const result = await service.register("dana@example.com", "a different password entirely", "Someone Else");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.accountId).not.toBe(real?.id);
+  });
 });
 
 describe("login (docs/33_API POST /sessions)", () => {

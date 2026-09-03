@@ -7,10 +7,20 @@ import type { SocketLike } from "../gateway/socket.js";
 export class MockSocket implements SocketLike {
   readonly sent: unknown[] = [];
   readonly closes: { readonly code: number; readonly reason: string }[] = [];
+  private readonly stalledFlushes: (() => void)[] = [];
+
+  /** `stalled: true` withholds every `onFlushed` callback until `flushAll()` is called — for exercising docs/12 §9's backpressure, where a real socket would leave bytes unwritten. */
+  constructor(private readonly stalled = false) {}
 
   send(data: string, onFlushed?: () => void): void {
     this.sent.push(JSON.parse(data));
-    onFlushed?.(); // flushes synchronously; a real socket would do so asynchronously
+    if (onFlushed === undefined) return;
+    if (this.stalled) this.stalledFlushes.push(onFlushed);
+    else onFlushed(); // flushes synchronously; a real socket would do so asynchronously
+  }
+
+  flushAll(): void {
+    while (this.stalledFlushes.length > 0) this.stalledFlushes.shift()!();
   }
 
   close(code: number, reason: string): void {

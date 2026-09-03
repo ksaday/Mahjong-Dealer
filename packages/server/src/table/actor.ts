@@ -67,7 +67,7 @@ import {
   type Table,
   type TableRejection,
 } from "./table.js";
-import { toWireEvent } from "./events.js";
+import { describePublicAction, toWireEvent } from "./events.js";
 import { projectTableView } from "./view.js";
 
 export type ActorFrame =
@@ -484,7 +484,8 @@ export class TableActor {
       return { ...event, reason: pauseReason };
     }
     if (event.type === "CorrectionProposed" && result.correctionSeqOverride !== undefined) {
-      return { ...event, rewindTo: result.correctionSeqOverride };
+      const rewindTo = result.correctionSeqOverride;
+      return { ...event, rewindTo, affectedActions: this.affectedActionsBetween(event.seat, rewindTo, this.seq) };
     }
     if (event.type === "CorrectionApplied" && result.correctionSeqOverride !== undefined) {
       return { ...event, restoredSeq: result.correctionSeqOverride };
@@ -493,6 +494,24 @@ export class TableActor {
       return { ...event, atSeq: this.seq };
     }
     return event;
+  }
+
+  /**
+   * docs/19 §6.6's `affectedActions[]`, computed from the proposer's own
+   * frame log — reading a seat's own already-delivered events is
+   * privacy-safe regardless of which seat proposed. `fromSeqExclusive` is
+   * the target being rewound *to* (nothing to undo there); `toSeqExclusive`
+   * is this `CorrectionProposed` itself. `describePublicAction` filters out
+   * anything a rewind wouldn't actually touch (`Table` state, chat/signals).
+   */
+  private affectedActionsBetween(seat: Seat, fromSeqExclusive: number, toSeqExclusive: number): readonly string[] {
+    const descriptions: string[] = [];
+    for (const frame of this.frameLog[seat]) {
+      if (frame.kind !== "event" || frame.seq <= fromSeqExclusive || frame.seq >= toSeqExclusive) continue;
+      const description = describePublicAction(frame.ev);
+      if (description !== null) descriptions.push(description);
+    }
+    return descriptions;
   }
 
   private pushFrame(seat: Seat, frame: ActorFrame): void {

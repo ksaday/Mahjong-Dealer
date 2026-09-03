@@ -47,11 +47,22 @@ export class Connection {
     return this.throttleStreak >= MAX_CONSECUTIVE_THROTTLES;
   }
 
+  /**
+   * Enforces docs/12 §9's backpressure action itself, rather than leaving
+   * `isSlowConsumer` for a caller to remember to poll after every one of
+   * the gateway's own dozen or so send sites — a threshold that must hold
+   * for every outbound frame belongs on the one method all of them funnel
+   * through.
+   */
   send(data: string): void {
-    this.pendingBytes += Buffer.byteLength(data);
+    const size = Buffer.byteLength(data);
+    this.pendingBytes += size;
     this.socket.send(data, () => {
-      this.pendingBytes -= Buffer.byteLength(data);
+      this.pendingBytes -= size;
     });
+    if (this.isSlowConsumer) {
+      this.close(4010, "SLOW_CONSUMER");
+    }
   }
 
   close(code: number, reason: string): void {

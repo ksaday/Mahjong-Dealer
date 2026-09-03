@@ -312,6 +312,9 @@ describe("rate limiting (docs/13 §10)", () => {
       handle.onMessage(JSON.stringify({ t: "cmd", cmd: "ping", cmdId: cmdId(i), cseq: i }));
     }
     expect(socket.closes).toEqual([{ code: 4009, reason: "RATE_LIMITED" }]);
+    // docs/19 §7.3's rate_limit_warning fires on every throttled attempt
+    // that doesn't itself cross the consecutive-throttle close threshold.
+    expect(socket.framesOfType("notice")).toContainEqual({ t: "notice", kind: "rate_limit_warning", d: {} });
   });
 });
 
@@ -545,6 +548,15 @@ describe("presence (docs/22, FR-140)", () => {
     );
   });
 
+  it("a heartbeat's first missed pong also sends the degrading connection its own connection_degraded notice (docs/19 §7.3)", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+
+    east.handle.onHeartbeatMiss();
+
+    expect(east.socket.framesOfType("notice")).toContainEqual({ t: "notice", kind: "connection_degraded", d: {} });
+  });
+
   it("an out-of-band occupySeat is visible to an already-connected seat once the gateway delivers it (TableService.joinTable's own path)", () => {
     const actor = new TableActor({ id: "t1", entropy: createDeterministicEntropy(1) });
     const tickets = new TicketStore();
@@ -583,6 +595,51 @@ describe("forceClose (docs/18 §4.3 POST /admin/tables/{id}/force-close, FR-161)
     bindSeat(gateway, tickets, "east");
     bindSeat(gateway, tickets, "south");
     expect(gateway.connectionCount()).toBe(2);
+  });
+});
+
+describe("vacateSeat (FR-025's connection eviction half)", () => {
+  it("closes the vacated seat's own bound connection with 4011 SEAT_VACATED and removes it", () => {
+    const { tickets, gateway } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+
+    const result = gateway.vacateSeat("east");
+
+    expect(result).toEqual({ ok: true });
+    expect(east.socket.closes).toEqual([{ code: 4011, reason: "SEAT_VACATED" }]);
+    expect(gateway.isConnected("east")).toBe(false);
+  });
+
+  it("still broadcasts SeatVacated to every other connected seat", () => {
+    const { tickets, gateway } = setUp();
+    bindSeat(gateway, tickets, "east");
+    const south = bindSeat(gateway, tickets, "south");
+
+    gateway.vacateSeat("east");
+
+    const vacated = south.socket
+      .framesOfType("event")
+      .find((f) => (f["ev"] as Record<string, unknown>)["type"] === "SeatVacated");
+    expect(vacated).toEqual(expect.objectContaining({ ev: { type: "SeatVacated", seat: "east" } }));
+  });
+
+  it("is a no-op on the connection map when the seat has no bound connection", () => {
+    const { gateway } = setUp();
+    const result = gateway.vacateSeat("east");
+    expect(result).toEqual({ ok: true });
+    expect(gateway.connectionCount()).toBe(0);
+  });
+
+  it("propagates the actor's own rejection (e.g. GAME_IN_PROGRESS) without touching any connection", () => {
+    const { tickets, gateway, actor } = setUp();
+    const east = bindSeat(gateway, tickets, "east");
+    for (const seat of SEAT_ORDER) actor.submit(seat, "set_ready", undefined);
+    actor.submit("east", "start_deal", undefined);
+
+    const result = gateway.vacateSeat("east");
+
+    expect(result).toEqual({ ok: false, code: "GAME_IN_PROGRESS" });
+    expect(east.socket.isClosed).toBe(false);
   });
 });
 

@@ -308,4 +308,30 @@ describe("Table (S-05, docs/32_UX/Screen_Inventory.md §3)", () => {
 
     expect(await screen.findByText("Only the host can deal.")).toBeInTheDocument();
   });
+
+  it("surfaces a notice frame as a toast (docs/19 §7.3)", async () => {
+    vi.stubGlobal("WebSocket", TestSocket);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: string) => {
+        if (input === "/api/v1/accounts/me") return Promise.resolve(meResponse());
+        if (input === "/api/v1/tables/mine") return Promise.resolve(jsonResponse(200, { tables: [oneSeatTable] }));
+        if (input === "/api/v1/tables/t1/connect-ticket") {
+          return Promise.resolve(jsonResponse(201, { ticket: "tk1", expires_at: new Date().toISOString() }));
+        }
+        throw new Error(`unexpected fetch: ${input}`);
+      }),
+    );
+
+    renderTable();
+    await waitFor(() => expect(TestSocket.instances).toHaveLength(1));
+    const socket = TestSocket.instances[0]!;
+
+    socket.open();
+    socket.receive({ t: "bound", seat: "east", protocolVersion: 1, seq: 0 });
+    socket.receive({ t: "resumed", seq: 0, view: fullView() });
+    socket.receive({ t: "notice", kind: "connection_degraded", d: {} });
+
+    expect(await screen.findByText("Your connection looks unsteady — you may be disconnected soon.")).toBeInTheDocument();
+  });
 });

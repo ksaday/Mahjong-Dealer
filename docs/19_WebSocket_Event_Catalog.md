@@ -286,6 +286,7 @@ Precedence when several apply: `TABLE_PAUSED`, `CORRECTION_PENDING`, `PASS_ROUND
 | 4008 | `PROTOCOL_VIOLATION` |
 | 4009 | `RATE_LIMITED` |
 | 4010 | `SLOW_CONSUMER` |
+| 4011 | `SEAT_VACATED` |
 | 1012 | `SERVICE_RESTART` |
 
 Client guidance per code in `33_API/Error_Code_Catalog.md`.

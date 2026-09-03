@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RejectFrame, TableEvent, WireSeatView } from "@mahjong-dealer/shared";
+import type { NoticeKind, RejectFrame, TableEvent, WireSeatView } from "@mahjong-dealer/shared";
 import { tablesApi } from "../api/tables.js";
 import { TableSocket, type TableSocketEvent } from "./TableSocket.js";
 import { tableGatewayUrl } from "./url.js";
@@ -33,6 +33,13 @@ export interface TableLiveState {
    * seat, and a conclusion's outcome.
    */
   readonly lastEvent: { readonly ev: TableEvent; readonly seq: number } | null;
+  /**
+   * The most recent `notice` frame (docs/19 §7.3) — `connection_degraded`,
+   * `rate_limit_warning`, `service_restarting`. `id` is a local counter,
+   * not a wire `seq` (notices carry none), so a consumer keyed on it
+   * re-fires even when the same kind repeats back to back.
+   */
+  readonly lastNotice: { readonly kind: NoticeKind; readonly id: number } | null;
   /** Throws if the connection isn't `"ready"` yet — callers gate on `phase` first. */
   readonly send: TableSocket["send"];
   reconnect(): void;
@@ -46,8 +53,10 @@ export function useTableLive(tableId: string): TableLiveState {
   const [closeInfo, setCloseInfo] = useState<{ readonly code: number; readonly reason: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<{ readonly ev: TableEvent; readonly seq: number } | null>(null);
+  const [lastNotice, setLastNotice] = useState<{ readonly kind: NoticeKind; readonly id: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const socketRef = useRef<TableSocket | null>(null);
+  const noticeSeq = useRef(0);
 
   useEffect(() => {
     if (tableId === "") return;
@@ -71,7 +80,10 @@ export function useTableLive(tableId: string): TableLiveState {
             setView(event.frame.view);
             setLastEvent({ ev: event.frame.ev, seq: event.frame.seq });
           } else if (event.type === "reject") setLastReject(event.frame);
-          else if (event.type === "closed") {
+          else if (event.type === "notice") {
+            noticeSeq.current += 1;
+            setLastNotice({ kind: event.frame.kind, id: noticeSeq.current });
+          } else if (event.type === "closed") {
             setPhase("closed");
             setCloseInfo({ code: event.code, reason: event.reason });
           }
@@ -104,5 +116,5 @@ export function useTableLive(tableId: string): TableLiveState {
 
   const reconnect = useCallback(() => setAttempt((n) => n + 1), []);
 
-  return { phase, view, lastReject, closeInfo, errorMessage, lastEvent, send, reconnect };
+  return { phase, view, lastReject, closeInfo, errorMessage, lastEvent, lastNotice, send, reconnect };
 }

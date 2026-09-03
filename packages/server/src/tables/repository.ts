@@ -46,6 +46,15 @@ export interface TableRepository {
   /** Only among live (non-`closed`) tables — a closed table's code is reusable (docs/17 §5.4). */
   findLiveByJoinCodeHash(hash: Buffer): Promise<TableRow | null>;
   setStatus(id: string, status: TableStatusRow, closedAt?: Date): Promise<void>;
+  /**
+   * Mirrors `Table.host` (`table/table.ts`) — reassigned in memory whenever
+   * the seated host leaves (`vacateSeat`'s `nextOccupiedHost`). `null` once
+   * every seat is empty. Without this, `host_account_id` would keep naming
+   * an account that no longer holds a seat, which both `closeTable`'s own
+   * auth check and a restart's host restoration (`restore.ts`) read as the
+   * table's authoritative host.
+   */
+  setHost(id: string, hostAccountId: string | null): Promise<void>;
   /** Replaces all four seat rows to match the table actor's current seat state, the source of truth. */
   syncSeats(tableId: string, seats: readonly SeatAssignment[]): Promise<void>;
   seatsForTable(tableId: string): Promise<readonly TableSeatRow[]>;

@@ -117,9 +117,16 @@ export class AuthService {
 
     const existing = await this.accounts.findByEmail(email);
     if (existing !== null) {
-      // D-18-04: report success, create nothing. The account ID returned
-      // in this branch names no real account and must never be dereferenced.
-      return { ok: true, accountId: existing.id };
+      // D-18-04: report success, create nothing. The account ID returned in
+      // this branch names no real account and must never be dereferenced —
+      // so it must not be `existing.id` either: `uuidv7` embeds a creation
+      // timestamp in its first 48 bits, and the real account's ID would let
+      // a caller compare that timestamp against "now" to learn both that
+      // the email is already registered and roughly when, defeating the
+      // enumeration resistance this branch exists for. A freshly minted
+      // one is shaped exactly like the create branch's own success value
+      // (a "just now" UUIDv7), so the two branches are indistinguishable.
+      return { ok: true, accountId: uuidv7() };
     }
 
     const passwordHash = await hashPassword(password, this.env);

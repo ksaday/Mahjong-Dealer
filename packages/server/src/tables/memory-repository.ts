@@ -48,6 +48,13 @@ export class InMemoryTableRepository implements TableRepository {
     return Promise.resolve();
   }
 
+  setHost(id: string, hostAccountId: string | null): Promise<void> {
+    const table = this.tables.get(id);
+    if (table === undefined) throw new Error(`unreachable: no table ${id}`);
+    this.tables.set(id, { ...table, host_account_id: hostAccountId });
+    return Promise.resolve();
+  }
+
   syncSeats(tableId: string, seats: readonly SeatAssignment[]): Promise<void> {
     const existing = this.seats.get(tableId);
     if (existing === undefined) throw new Error(`unreachable: no table ${tableId}`);

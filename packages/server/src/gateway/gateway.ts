@@ -31,6 +31,7 @@ import {
   type Seat,
 } from "@mahjong-dealer/shared";
 import type { ActorFrame, TableActor } from "../table/actor.js";
+import type { TableRejection } from "../table/table.js";
 import type { CheckpointWriter } from "../checkpoint/writer.js";
 import { Connection } from "./connection.js";
 import type { SocketLike } from "./socket.js";
@@ -141,6 +142,31 @@ export class TableGateway {
   }
 
   /**
+   * FR-025's connection half: `TableActor.vacateSeat` alone empties the
+   * seat but has no notion of a bound connection to evict. This is
+   * deliberately unlike `forceClose` above, whose own doc comment reasons
+   * that leaving sockets bound there is safe *because* a terminally
+   * closed table will never re-occupy a seat with fresh concealed state —
+   * a reasoning that does not hold here. A vacated seat can absolutely be
+   * re-occupied, so a connection still bound to it must be evicted now,
+   * the same way `checkSessionRevocation` already evicts a connection the
+   * moment the server should no longer trust it — otherwise it would keep
+   * receiving this seat's own broadcasts, including the next occupant's
+   * concealed view once a new game deals.
+   */
+  vacateSeat(seat: Seat): { readonly ok: true } | TableRejection {
+    const result = this.actor.vacateSeat(seat);
+    if (!result.ok) return result;
+    this.deliverNewFrames();
+    const connection = this.connections.get(seat);
+    if (connection !== undefined) {
+      connection.close(4011, "SEAT_VACATED");
+      this.connections.delete(seat);
+    }
+    return { ok: true };
+  }
+
+  /**
    * Graceful shutdown (docs/21_Error_Handling_and_Recovery.md §7,
    * docs/19_WebSocket_Event_Catalog.md's `service_restarting` notice and
    * `1012 SERVICE_RESTART` close code): tells every connected seat a
@@ -242,6 +268,12 @@ export class TableGateway {
   private markSeatAway(seat: Seat): void {
     this.actor.setSeatConnection(seat, "away");
     this.deliverNewFrames();
+    // docs/19 §7.3's `connection_degraded` — "heartbeats are slow; a
+    // disconnection may follow" — self-only: it tells this connection
+    // about its own missed heartbeat, unlike the `SeatDisconnected`/`away`
+    // state `deliverNewFrames` just broadcast to every seat's view.
+    const connection = this.connections.get(seat);
+    connection?.send(JSON.stringify({ t: "notice", kind: "connection_degraded", d: {} } satisfies ServerFrame));
   }
 
   private handleBind(socket: SocketLike, connectedAt: number, raw: string): Connection | null {
@@ -382,6 +414,10 @@ export class TableGateway {
         connection.close(4009, "RATE_LIMITED");
         return;
       }
+      // docs/19 §7.3's `rate_limit_warning` — "approaching a limit" — sent
+      // alongside every throttled reject up to `hasExceededThrottleLimit`'s
+      // own close, since that close is the limit being approached.
+      connection.send(JSON.stringify({ t: "notice", kind: "rate_limit_warning", d: {} } satisfies ServerFrame));
       this.rejectAndRecord(connection, cmdId, "RATE_LIMITED");
       return;
     }

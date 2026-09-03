@@ -278,6 +278,61 @@ describe("leaveSeat (FR-025, docs/33_API DELETE /tables/{id}/me)", () => {
     const result = await service.leaveSeat(accounts[0]!.id, created.tableId);
     expect(result).toEqual({ ok: false, code: "GAME_IN_PROGRESS" });
   });
+
+  it("reassigns the persisted host when the host leaves, so the new host can close and the old one can't", async () => {
+    const { service, tables, account } = await setUp();
+    const alice = await account("Alice");
+    const bob = await account("Bob");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+    await service.joinTable(bob.id, bob.display_name, created.joinCode);
+
+    const result = await service.leaveSeat(alice.id, created.tableId);
+    expect(result).toEqual({ ok: true });
+
+    const row = await tables.findById(created.tableId);
+    expect(row?.host_account_id).toBe(bob.id);
+
+    expect(await service.closeTable(bob.id, created.tableId)).toEqual({ ok: true });
+  });
+
+  it("closes the leaving seat's own bound connection, so it can't linger and receive the next occupant's concealed view", async () => {
+    const { service, manager, account } = await setUp();
+    const alice = await account("Alice");
+    const bob = await account("Bob");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+    await service.joinTable(bob.id, bob.display_name, created.joinCode);
+
+    const live = manager.get(created.tableId);
+    if (live === undefined) throw new Error("unreachable");
+    const socket = new MockSocket();
+    const handle = live.gateway.acceptConnection(socket);
+    const ticket = live.tickets.issue({ accountId: alice.id, sessionId: "s1", tableId: created.tableId, seat: "east" });
+    handle.onMessage(
+      JSON.stringify({ t: "cmd", cmd: "bind", cmdId: "018f3a2b-1c3d-7e4f-8a12-000000000000", cseq: 1, d: { ticket } }),
+    );
+    expect(live.gateway.isConnected("east")).toBe(true);
+
+    const result = await service.leaveSeat(alice.id, created.tableId);
+
+    expect(result).toEqual({ ok: true });
+    expect(socket.closes).toEqual([{ code: 4011, reason: "SEAT_VACATED" }]);
+    expect(live.gateway.isConnected("east")).toBe(false);
+  });
+
+  it("does not let the departed host close the table by naming their own former account id", async () => {
+    const { service, account } = await setUp();
+    const alice = await account("Alice");
+    const bob = await account("Bob");
+    const created = await service.createTable(alice.id, alice.display_name);
+    if (!created.ok) throw new Error("expected success");
+    await service.joinTable(bob.id, bob.display_name, created.joinCode);
+
+    await service.leaveSeat(alice.id, created.tableId);
+
+    expect(await service.closeTable(alice.id, created.tableId)).toEqual({ ok: false, code: "NOT_FOUND" });
+  });
 });
 
 describe("issueConnectTicket (docs/33_API POST /tables/{id}/connect-ticket)", () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
+import type { NoticeKind } from "@mahjong-dealer/shared";
 import { ApiError } from "../api/client.js";
 import { tablesApi, type MyTable } from "../api/tables.js";
 import { useAuth } from "../auth/AuthContext.js";
@@ -62,6 +63,12 @@ export function Table() {
       show(live.lastReject.message);
     }
   }, [live.lastReject, show]);
+
+  useEffect(() => {
+    if (live.lastNotice !== null) {
+      show(noticeMessage(live.lastNotice.kind));
+    }
+  }, [live.lastNotice, show]);
 
   const gameState = live.view?.gameState;
   useEffect(() => {
@@ -213,4 +220,16 @@ export function Table() {
       </p>
     </main>
   );
+}
+
+/** docs/19 §7.3 — the three out-of-band notice kinds, in user-facing terms. */
+function noticeMessage(kind: NoticeKind): string {
+  switch (kind) {
+    case "connection_degraded":
+      return "Your connection looks unsteady — you may be disconnected soon.";
+    case "rate_limit_warning":
+      return "You're sending commands too quickly.";
+    case "service_restarting":
+      return "The server is restarting shortly — you'll be reconnected automatically.";
+  }
 }

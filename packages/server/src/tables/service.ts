@@ -185,11 +185,16 @@ export class TableService {
     const seat = seatFor(live.actor.tableSnapshot, accountId);
     if (seat === null) return { ok: false, code: "NOT_FOUND" };
 
-    const result = live.actor.vacateSeat(seat);
+    // `gateway.vacateSeat`, not `actor.vacateSeat` directly: the gateway's
+    // own version also evicts this seat's bound connection (if any), the
+    // same "mutate the actor, then handle the connection-level fallout"
+    // shape `forceClose` already uses — a plain `actor.vacateSeat` call
+    // here would leave a stale connection bound to a seat that can be
+    // re-occupied by someone else.
+    const result = live.gateway.vacateSeat(seat);
     if (!result.ok) {
       return result.code === "GAME_IN_PROGRESS" ? { ok: false, code: "GAME_IN_PROGRESS" } : { ok: false, code: "NOT_FOUND" };
     }
-    live.gateway.deliverPendingFrames();
 
     // Only stamp closed_at when vacateSeat's own docs/05 §4 cascade actually
     // closed the table (setStatus treats any non-undefined third argument
@@ -214,6 +219,15 @@ export class TableService {
     return { ok: true, ticket, expiresAt: new Date(this.now().getTime() + live.tickets.ttlMs) };
   }
 
+  /**
+   * Mirrors both the seat rows and `Table.host` (`table/table.ts`) from the
+   * live actor. The host mirror matters here specifically because
+   * `vacateSeat` can reassign `Table.host` in memory (`nextOccupiedHost`,
+   * when the leaving seat was host) with no dedicated call site of its
+   * own — piggybacking on every caller of this method (`createTable`,
+   * `joinTable`, `leaveSeat`) is what keeps `host_account_id` from going
+   * stale without new bookkeeping at each one.
+   */
   private async syncSeatsFromActor(tableId: string, table: Table): Promise<void> {
     const now = this.now();
     const assignments: SeatAssignment[] = Object.entries(table.seats).map(([seat, state]) => ({
@@ -223,6 +237,7 @@ export class TableService {
       occupiedAt: state.occupant === null ? null : now,
     }));
     await this.tables.syncSeats(tableId, assignments);
+    await this.tables.setHost(tableId, table.host === null ? null : table.seats[table.host].occupant);
   }
 }
 

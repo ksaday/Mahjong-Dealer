@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TileHandle, WireSeatView } from "@mahjong-dealer/shared";
@@ -143,5 +143,42 @@ describe("GameTable (S-06, docs/32_UX/Screen_Inventory.md §3)", () => {
     expect(send).toHaveBeenCalledWith("send_table_message", { text: "hello" });
 
     rerender(<GameTable view={baseView()} send={send} lastEvent={{ seq: 2, ev: { type: "TableMessage", seat: "south", displayName: "Bob", text: "hi" } }} onReturnToLobby={vi.fn()} />);
+  });
+
+  it("reorders the rack by dragging a tile onto another, without a server round trip blocking the visual result (FR-100, FR-105)", () => {
+    const send = vi.fn();
+    render(<GameTable view={baseView()} send={send} lastEvent={null} onReturnToLobby={vi.fn()} />);
+
+    const first = screen.getByRole("button", { name: "Five of dots, position 1 of 3" });
+    const second = screen.getByRole("button", { name: "Three of bams, position 2 of 3" });
+
+    fireEvent.dragStart(first);
+    fireEvent.dragOver(second);
+    fireEvent.drop(second);
+
+    expect(send).toHaveBeenCalledWith("arrange_hand", { handles: ["h2", "h1"] });
+    expect(screen.getByRole("button", { name: "Three of bams, position 1 of 3" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Five of dots, position 2 of 3" })).toBeInTheDocument();
+  });
+
+  it("moves the single selected tile with Alt+ArrowRight (docs/24_Accessibility.md §5.2)", async () => {
+    const send = vi.fn();
+    render(<GameTable view={baseView()} send={send} lastEvent={null} onReturnToLobby={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Five of dots, position 1 of 3" }));
+    fireEvent.keyDown(document, { key: "ArrowRight", altKey: true });
+
+    expect(send).toHaveBeenCalledWith("arrange_hand", { handles: ["h2", "h1"] });
+    expect(screen.getByRole("button", { name: "Five of dots, position 2 of 3" })).toBeInTheDocument();
+  });
+
+  it("does not move a tile past the end of the rack, and does nothing with more than one tile selected", () => {
+    const send = vi.fn();
+    render(<GameTable view={baseView()} send={send} lastEvent={null} onReturnToLobby={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Three of bams, position 2 of 3" }));
+    fireEvent.keyDown(document, { key: "ArrowRight", altKey: true });
+    expect(send).not.toHaveBeenCalled();
   });
 });

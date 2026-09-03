@@ -14,8 +14,8 @@ describe("rejection codes (docs/19 §7.1)", () => {
 });
 
 describe("close codes (docs/19 §7.2)", () => {
-  it("has exactly eight codes, each a valid WebSocket close code with a SCREAMING_SNAKE_CASE name", () => {
-    expect(CLOSE_CODES).toHaveLength(8);
+  it("has exactly nine codes, each a valid WebSocket close code with a SCREAMING_SNAKE_CASE name", () => {
+    expect(CLOSE_CODES).toHaveLength(9);
     for (const { code, name } of CLOSE_CODES) {
       expect(Number.isInteger(code)).toBe(true);
       expect(name).toMatch(/^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$/u);

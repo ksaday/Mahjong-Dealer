@@ -282,6 +282,7 @@ incoherent view, and resumption from a known sequence is cheap and correct (`§8
 | 4008 | `PROTOCOL_VIOLATION` | Malformed frame, `cseq` gap, or a frame in the wrong state |
 | 4009 | `RATE_LIMITED` | Sustained throttling |
 | 4010 | `SLOW_CONSUMER` | Backpressure threshold exceeded |
+| 4011 | `SEAT_VACATED` | This connection's seat was vacated (`leaveSeat`, FR-025) |
 | 1012 | `SERVICE_RESTART` | Planned restart; reconnect after a short delay |
 
 Full catalog with client guidance in `33_API/Error_Code_Catalog.md`.
@@ -296,6 +297,7 @@ Full catalog with client guidance in `33_API/Error_Code_Catalog.md`.
 | 4004 | Return to login |
 | 4009 | Back off, then reconnect |
 | 4010, 1012, transport loss | Reconnect with exponential backoff and jitter: 1s, 2s, 4s, 8s, capped at 30s |
+| 4011 | Not reconnect — this seat is no longer held; return to the lobby |
 
 Jitter matters: a server restart disconnects four clients simultaneously, and without jitter they
 reconnect in lockstep.

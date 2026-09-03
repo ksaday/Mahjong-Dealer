@@ -60,6 +60,10 @@ export class PostgresTableRepository implements TableRepository {
     ]);
   }
 
+  async setHost(id: string, hostAccountId: string | null): Promise<void> {
+    await this.pool.query("UPDATE tables SET host_account_id = $2 WHERE id = $1", [id, hostAccountId]);
+  }
+
   async syncSeats(tableId: string, seats: readonly SeatAssignment[]): Promise<void> {
     const client = await this.pool.connect();
     try {
