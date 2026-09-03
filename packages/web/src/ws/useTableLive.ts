@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RejectFrame, WireSeatView } from "@mahjong-dealer/shared";
+import type { RejectFrame, TableEvent, WireSeatView } from "@mahjong-dealer/shared";
 import { tablesApi } from "../api/tables.js";
 import { TableSocket, type TableSocketEvent } from "./TableSocket.js";
 import { tableGatewayUrl } from "./url.js";
@@ -23,6 +23,16 @@ export interface TableLiveState {
   readonly lastReject: RejectFrame | null;
   readonly closeInfo: { readonly code: number; readonly reason: string } | null;
   readonly errorMessage: string | null;
+  /**
+   * The event carried by the most recent `event` frame, alongside its seq
+   * so a consumer keyed on this value re-fires even when the same event
+   * type repeats. `null` until the first one arrives, and not replayed on
+   * `resumed` (docs/12 §5.4 sends a snapshot there, never a backlog) — the
+   * source for anything the seat view itself doesn't retain: chat
+   * (`FR-131`, session-only by design), signals, a pause's reason and
+   * seat, and a conclusion's outcome.
+   */
+  readonly lastEvent: { readonly ev: TableEvent; readonly seq: number } | null;
   /** Throws if the connection isn't `"ready"` yet — callers gate on `phase` first. */
   readonly send: TableSocket["send"];
   reconnect(): void;
@@ -35,6 +45,7 @@ export function useTableLive(tableId: string): TableLiveState {
   const [lastReject, setLastReject] = useState<RejectFrame | null>(null);
   const [closeInfo, setCloseInfo] = useState<{ readonly code: number; readonly reason: string } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastEvent, setLastEvent] = useState<{ readonly ev: TableEvent; readonly seq: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const socketRef = useRef<TableSocket | null>(null);
 
@@ -56,8 +67,10 @@ export function useTableLive(tableId: string): TableLiveState {
           else if (event.type === "resumed") {
             setPhase("ready");
             if (event.frame.view !== undefined) setView(event.frame.view);
-          } else if (event.type === "event") setView(event.frame.view);
-          else if (event.type === "reject") setLastReject(event.frame);
+          } else if (event.type === "event") {
+            setView(event.frame.view);
+            setLastEvent({ ev: event.frame.ev, seq: event.frame.seq });
+          } else if (event.type === "reject") setLastReject(event.frame);
           else if (event.type === "closed") {
             setPhase("closed");
             setCloseInfo({ code: event.code, reason: event.reason });
@@ -91,5 +104,5 @@ export function useTableLive(tableId: string): TableLiveState {
 
   const reconnect = useCallback(() => setAttempt((n) => n + 1), []);
 
-  return { phase, view, lastReject, closeInfo, errorMessage, send, reconnect };
+  return { phase, view, lastReject, closeInfo, errorMessage, lastEvent, send, reconnect };
 }

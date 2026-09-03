@@ -13,6 +13,17 @@
   --space-4: 1rem;
   --space-6: 1.5rem;
   --target-min: 44px; /* docs/24 §3 */
+
+  /* S-06 (docs/32_UX/Table_Layout_and_Perspective.md §5): a muted table
+     surface so tiles are the brightest thing on screen; a light tile
+     face with a dark glyph, both clearing their contrast floors. */
+  --table-surface: #1b2420;
+  --tile-face-bg: #f4ecd8;
+  --tile-face-bg-top: #fbf6ea;
+  --tile-face-fg: #241c10; /* ~15:1 on --tile-face-bg, clears the 7:1 face floor */
+  --tile-edge: #6b5a3a; /* ~4.7:1 on --table-surface, clears the 4.5:1 edge floor */
+  --tile-back-bg: #2c3a33;
+  --tile-back-pattern: #445248;
 }
 
 * {
@@ -141,6 +152,433 @@ button {
   padding: var(--space-3) var(--space-4);
   border-radius: 4px;
   max-width: 24rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- S-06 Game table (docs/32_UX/Table_Layout_and_Perspective.md) ---- */
+
+.screen-wide {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+
+/* ---- Tile (docs/32_UX/Tile_Component_Spec.md) ---- */
+
+.tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: calc(var(--tile-height, 72px) * 0.055);
+  border: 1px solid var(--tile-edge);
+  background: linear-gradient(var(--tile-face-bg-top), var(--tile-face-bg) 60%);
+  color: var(--tile-face-fg);
+  transition: transform 100ms ease-out, box-shadow 100ms ease-out;
+}
+
+button.tile {
+  cursor: pointer;
+}
+
+.tile-back {
+  background: var(--tile-back-bg);
+  color: var(--tile-back-pattern);
+}
+
+.tile-back-pattern {
+  width: 70%;
+  height: 70%;
+  border-radius: 3px;
+  background: repeating-linear-gradient(135deg, var(--tile-back-pattern), var(--tile-back-pattern) 3px, transparent 3px, transparent 7px);
+}
+
+.tile-glyph {
+  width: 84%;
+  height: 84%;
+}
+
+.tile:hover:not(:disabled):not(.tile-inert) {
+  transform: translateY(-2px);
+}
+
+.tile:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.tile-selected {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  transform: translateY(-4px);
+}
+
+.tile-armed {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.tile-armed-caption {
+  position: absolute;
+  bottom: -1.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  color: var(--color-focus);
+  white-space: nowrap;
+}
+
+.tile-pending {
+  opacity: 0.6;
+}
+
+.tile-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 30%;
+  height: 30%;
+  border: 2px solid var(--tile-edge);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tile-spin 700ms linear infinite;
+}
+
+@keyframes tile-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tile-inert {
+  cursor: default;
+}
+
+.tile-gap {
+  display: inline-block;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  background: transparent;
+}
+
+/* ---- Table layout ---- */
+
+.game-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.banner {
+  padding: var(--space-3) var(--space-4);
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.banner-neutral {
+  background: var(--color-surface);
+}
+
+.table-across {
+  align-self: center;
+}
+
+.table-middle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: var(--table-surface);
+  border-radius: 8px;
+  padding: var(--space-4);
+}
+
+.table-side {
+  flex: 0 0 auto;
+}
+
+.table-center {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 12rem;
+}
+
+.wall {
+  text-align: center;
+}
+
+.wall-count {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.wall-ends {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.wall-end {
+  min-height: var(--target-min);
+  min-width: var(--target-min);
+  padding: 0 var(--space-4);
+  border-radius: 4px;
+  border: 1px solid var(--tile-edge);
+  background: var(--tile-face-bg);
+  color: var(--tile-face-fg);
+  font-weight: 700;
+}
+
+.wall-end:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.discard-pile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  justify-content: center;
+  max-width: 28rem;
+}
+
+.own-exposures,
+.exposure-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-height: 1px;
+}
+
+.exposure-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.own-rack-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.seat-caption {
+  margin: 0;
+  font-weight: 600;
+}
+
+.turn-caret {
+  color: var(--color-focus);
+}
+
+.own-rack {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+}
+
+.table-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.armed-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 2px solid var(--color-focus);
+  border-radius: 4px;
+}
+
+.armed-bar p {
+  margin: 0;
+  flex: 1;
+}
+
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.turn-indicator {
+  margin: 0;
+  font-weight: 600;
+}
+
+.correction-builder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pass-round-panel,
+.pass-round-builder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pass-round-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pass-round-counts {
+  display: flex;
+  gap: var(--space-3);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+/* ---- Votes (docs/32_UX/Interaction_Patterns.md §3) ---- */
+
+.vote-band {
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.vote-headline {
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+}
+
+.vote-detail {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.vote-progress {
+  display: flex;
+  gap: var(--space-4);
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-3);
+}
+
+.vote-responded {
+  color: var(--color-accent);
+}
+
+.vote-waiting {
+  color: var(--color-text-muted);
+}
+
+.vote-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.vote-note {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* ---- Chat (docs/32_UX/Interaction_Patterns.md §6) ---- */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 8rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-sender {
+  color: var(--color-text-muted);
+}
+
+.chat-signals {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.chat-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-form input {
+  flex: 1;
+  min-height: var(--target-min);
+  padding: 0 var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.chat-count {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* ---- Opponent seat panel ---- */
+
+.seat-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 16rem;
+}
+
+.opponent-rack {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  max-width: 16rem;
+}
+
+.hand-count {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.signal-flash {
+  color: var(--color-focus);
+}
+
+@media (max-width: 768px) {
+  .table-middle {
+    flex-direction: column;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,15 +4,23 @@ import { ApiError } from "../api/client.js";
 import { tablesApi, type MyTable } from "../api/tables.js";
 import { useAuth } from "../auth/AuthContext.js";
 import { useToast } from "../components/Toast.js";
+import { GameTable } from "../gametable/GameTable.js";
 import { recallJoinCode } from "../tables/joinCodeStorage.js";
 import { useTableLive } from "../ws/useTableLive.js";
 
 // S-05 Table lobby (docs/32_UX/Screen_Inventory.md §3), simplified: a
 // plain seat list rather than the four compass positions
-// Table_Layout_and_Perspective.md specifies. That spatial layout is
-// shared visual infrastructure with S-06's own rendering and deserves its
-// own pass once tile rendering exists — tracked as a simplification, not
-// silently treated as the finished design.
+// Table_Layout_and_Perspective.md specifies — that spatial layout now
+// exists (`gametable/GameTable.tsx`) for S-06, but porting the lobby's own
+// seat list onto it is a follow-up, not folded in silently here.
+//
+// A concluded game returns to this lobby, not home (D-32-02) — but the
+// game itself stays server-side `CONCLUDED` (not `IDLE`) until the host
+// deals again (docs/09 §4's `start_deal` is `✔` from both), so which body
+// renders is client-side: `GameTable` shows its own concluded band with a
+// "Return to the lobby" control, and this screen just stops treating
+// `CONCLUDED` as game-shaped once that control is pressed. A fresh game
+// beginning (`gameState` leaving `CONCLUDED`) resets the flag.
 //
 // Known wire-contract gap, surfaced rather than worked around: nothing on
 // the wire (`WireSeatView`/`WireSeatSummary`) or in `GET /tables/mine`
@@ -30,6 +38,7 @@ export function Table() {
 
   const [table, setTable] = useState<MyTable | null | undefined>(undefined);
   const [closing, setClosing] = useState(false);
+  const [ackConcluded, setAckConcluded] = useState(false);
 
   const load = useCallback(() => {
     if (tableId === undefined) return;
@@ -52,6 +61,11 @@ export function Table() {
       show(live.lastReject.message);
     }
   }, [live.lastReject, show]);
+
+  const gameState = live.view?.gameState;
+  useEffect(() => {
+    if (gameState !== undefined && gameState !== "concluded") setAckConcluded(false);
+  }, [gameState]);
 
   if (state.status === "loading" || table === undefined) {
     return (
@@ -91,7 +105,22 @@ export function Table() {
 
   const ownSeat = live.view?.seats.find((s) => s.seat === live.view?.seat) ?? null;
   const allReady = live.view !== null && live.view.seats.every((s) => s.ready);
-  const canStartDeal = live.view !== null && live.view.tableState === "seated" && live.view.gameState === "idle" && allReady;
+  const canStartDeal =
+    live.view !== null &&
+    live.view.tableState === "seated" &&
+    (live.view.gameState === "idle" || live.view.gameState === "concluded") &&
+    allReady;
+
+  const gameActive =
+    live.view !== null && live.view.gameState !== "idle" && !(live.view.gameState === "concluded" && ackConcluded);
+
+  if (live.phase === "ready" && live.view !== null && gameActive) {
+    return (
+      <main id="main" className="screen-wide">
+        <GameTable view={live.view} send={live.send} lastEvent={live.lastEvent} onReturnToLobby={() => setAckConcluded(true)} />
+      </main>
+    );
+  }
 
   return (
     <main id="main" className="screen">
@@ -140,7 +169,7 @@ export function Table() {
               ))}
             </ul>
 
-            {live.view.gameState === "idle" && ownSeat !== null && (
+            {ownSeat !== null && (
               <button
                 type="button"
                 className="button-primary"
@@ -155,8 +184,6 @@ export function Table() {
                 Start dealing
               </button>
             )}
-
-            {live.view.gameState !== "idle" && <p>A game is in progress. The game table isn&rsquo;t built yet.</p>}
           </>
         )}
       </section>
