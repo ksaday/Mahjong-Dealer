@@ -70,6 +70,23 @@ describe("CheckpointWriter", () => {
     expect(restored?.seq).toBe(harness.seqNumber()); // the actor's own seq, distinct from GameState.seq
   });
 
+  it("writes acceptedCmdIds into the plaintext receipts column, and readGameState round-trips the cmdId/seq pairs (docs/13 §4, ADR-0009)", async () => {
+    const { checkpoints, writer } = setUp();
+    const harness = TableHarness.create({ seed: 30 });
+    readyAllAndDeal(harness);
+    const outcome = harness.actorForTest().submit("east", "draw_tile", { end: "head" }, { cmdId: "cmd-1" });
+    if (!outcome.ok) throw new Error("unreachable");
+    const gameId = harness.currentGameId();
+    if (gameId === null) throw new Error("unreachable");
+
+    await writer.startGame(gameId, "harness-table");
+    await writer.flushSync(harness.actorForTest());
+
+    expect(checkpoints.peek(gameId)?.receipts).toEqual(["cmd-1"]);
+    const restored = await writer.readGameState(gameId);
+    expect(restored?.receipts).toEqual([["cmd-1", outcome.seq]]);
+  });
+
   it("purge deletes the checkpoint and marks the game purged", async () => {
     const { checkpoints, games, writer } = setUp();
     const harness = TableHarness.create({ seed: 4 });

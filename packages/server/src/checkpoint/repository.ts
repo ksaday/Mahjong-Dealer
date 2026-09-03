@@ -16,6 +16,8 @@ export interface NewCheckpointRow {
   readonly publicState: unknown;
   /** Already AES-256-GCM ciphertext (`checkpoint-encryption.ts`) — this repository never encrypts or decrypts. */
   readonly privateState: Buffer;
+  /** Plaintext operational projection of applied `cmdId`s (docs/17 §5.7, docs/13 §4) — distinct from `private_state`'s encrypted copy (cmdId + seq, `ActorSnapshot.receipts`), which is what restore actually reads. */
+  readonly receipts: readonly string[];
   readonly keyVersion: number;
 }
 

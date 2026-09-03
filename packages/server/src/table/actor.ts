@@ -23,11 +23,15 @@
 //
 // Scope note: `bind`/`resume`/`ping` (gateway, docs/12, Phase 5) are not
 // commands this actor accepts — a caller submitting one is a host wiring
-// defect. `ack` frames are not modeled here: they require a client
-// `cmdId` (docs/33_API §3), which is an idempotency/gateway concern
-// (docs/13) this actor doesn't yet see. The `event` frame delivered to
-// the acting seat (every accepted command still broadcasts to all four
-// seats, itself included) stands in for confirmation in this slice.
+// defect. `ack`/`reject` frames are not built here — the gateway still owns
+// the wire envelope (docs/33_API §3), since this actor has no concept of
+// one. What this actor *does* track durably is `cmdId` idempotency itself
+// (docs/13 §4, ADR-0009): `submit`'s optional `cmdId` is checked against
+// `CommandReceipts` before dispatch, and a repeat returns the original
+// `seq` without re-applying — the gateway's own in-memory frame cache
+// (`TableGateway`'s `receipts` map) still owns the fast, same-process path
+// and exact-frame replay including rejections; this actor's own tracking
+// is the durable backstop that survives a restart, per `receipts.ts`.
 import { randomUUID } from "node:crypto";
 import {
   apply,
@@ -49,6 +53,7 @@ import {
   type WireSeatView,
 } from "@mahjong-dealer/shared";
 import { CheckpointHistory, type CheckpointEntry } from "./checkpoints.js";
+import { CommandReceipts } from "./receipts.js";
 import {
   allReady,
   closeTable,
@@ -80,6 +85,8 @@ export interface ActorSnapshot {
   readonly gameStateBytes: string;
   /** The current game's durable row id (`games.id`), or `null` when idle/concluded — see `TableActor.currentGameId`. */
   readonly gameId: string | null;
+  /** Durable `cmdId` idempotency (docs/13 §4, ADR-0009, `receipts.ts`) — cmdId/seq pairs, since a `Map` isn't JSON-serializable. */
+  readonly receipts: readonly (readonly [string, number])[];
 }
 
 /**
@@ -123,12 +130,14 @@ export class TableActor {
   /** The current game's durable row id (`games.id`, docs/17 §5.6) — minted fresh at each `start_deal`, cleared on force-close or once purged after conclusion (docs/16 §5.5). `null` means "nothing to checkpoint." */
   private gameId: string | null = null;
   private readonly checkpoints: CheckpointHistory;
+  private readonly commandReceipts: CommandReceipts;
   private readonly frameLog: Record<Seat, ActorFrame[]>;
 
   constructor(private readonly options: TableActorOptions) {
     this.table = createTable(options.id);
     this.gameState = createIdleState();
     this.checkpoints = new CheckpointHistory(options.correctionWindow ?? 10);
+    this.commandReceipts = new CommandReceipts();
     this.frameLog = {} as Record<Seat, ActorFrame[]>;
     for (const seat of SEAT_ORDER) {
       this.frameLog[seat] = [];
@@ -155,6 +164,11 @@ export class TableActor {
   get latestCorrectionCheckpoint(): CheckpointEntry | null {
     const entries = this.checkpoints.all();
     return entries.length === 0 ? null : entries[entries.length - 1]!;
+  }
+
+  /** Every `cmdId` durably applied in the current game — for `checkpoints.receipts`, the plaintext operational projection (docs/17 §5.7). Restore never reads this back; `ActorSnapshot.receipts` (cmdId + seq) is the restore-critical copy. */
+  get acceptedCmdIds(): readonly string[] {
+    return this.commandReceipts.keys();
   }
 
   /** Called once a caller has durably purged this game's checkpoint (`CheckpointWriter.purge`) after a natural conclusion — guards against re-purging on a later submit against the same concluded game. */
@@ -199,6 +213,10 @@ export class TableActor {
     this.table = closeTable(this.table);
     this.gameState = createIdleState();
     this.checkpoints.clear();
+    // Bypasses submit()/dispatch() entirely, so the clearCheckpoints branch
+    // never runs for this path — clear commandReceipts here too, same
+    // "for the life of the game" scope docs/13 §4 gives it.
+    this.commandReceipts.clear();
     this.gameId = null;
     this.seq += 1;
     const event: TableEvent = { type: "TableClosed", reason };
@@ -227,7 +245,13 @@ export class TableActor {
    * parameter below, fed by `CheckpointWriter.readCorrectionHistory`.
    */
   snapshot(): ActorSnapshot {
-    return { table: this.table, seq: this.seq, gameStateBytes: this.checkpointBytes(), gameId: this.gameId };
+    return {
+      table: this.table,
+      seq: this.seq,
+      gameStateBytes: this.checkpointBytes(),
+      gameId: this.gameId,
+      receipts: this.commandReceipts.entries(),
+    };
   }
 
   static fromSnapshot(options: TableActorOptions, snapshot: ActorSnapshot): TableActor {
@@ -236,6 +260,9 @@ export class TableActor {
     actor.seq = snapshot.seq;
     actor.gameState = coreRestore(snapshot.gameStateBytes);
     actor.gameId = snapshot.gameId;
+    for (const [cmdId, seq] of snapshot.receipts) {
+      actor.commandReceipts.record(cmdId, seq);
+    }
     return actor;
   }
 
@@ -256,11 +283,21 @@ export class TableActor {
    * ring-buffer order. Empty by default: a table with no game, or whose
    * correction window couldn't be read, restores exactly as it did before
    * this durability existed — an empty window, not a failure.
+   *
+   * `game.receipts` (docs/13 §4, ADR-0009) replays durable `cmdId`
+   * idempotency the same way — a retried command whose `cmdId` was
+   * recorded before a crash still returns its original `seq` after
+   * restart, without being re-applied.
    */
   static fromRestoredParts(
     options: TableActorOptions,
     table: Table,
-    game: { readonly seq: number; readonly gameStateBytes: string; readonly gameId: string | null } | null,
+    game: {
+      readonly seq: number;
+      readonly gameStateBytes: string;
+      readonly gameId: string | null;
+      readonly receipts: readonly (readonly [string, number])[];
+    } | null,
     correctionHistory: readonly { readonly actorSeq: number; readonly gameStateBytes: string }[] = [],
   ): TableActor {
     const actor = new TableActor(options);
@@ -269,6 +306,9 @@ export class TableActor {
       actor.seq = game.seq;
       actor.gameState = coreRestore(game.gameStateBytes);
       actor.gameId = game.gameId;
+      for (const [cmdId, seq] of game.receipts) {
+        actor.commandReceipts.record(cmdId, seq);
+      }
     }
     for (const entry of correctionHistory) {
       actor.checkpoints.record(entry.actorSeq, coreRestore(entry.gameStateBytes));
@@ -284,24 +324,52 @@ export class TableActor {
    * `event`/`reject` frames for every seat are still available via
    * `framesFor`, as before.
    *
-   * `pauseReason` is not a wire parameter — `request_pause` carries none
-   * (docs/19 `request_pause | — | — | TablePaused`) — it is this actor's
-   * own out-of-band context for `gateway.ts`'s `autoPauseOnAbsence`,
-   * which is the one caller with presence knowledge dealer-core
-   * deliberately doesn't have (`state.ts`'s module comment). A genuine
-   * client `request_pause` frame never carries one, so `toWireEvent`'s
-   * own default (`"requested"`, `table/events.ts`) is what every
-   * player-initiated pause still gets; only this actor overrides it,
+   * `options.pauseReason` is not a wire parameter — `request_pause`
+   * carries none (docs/19 `request_pause | — | — | TablePaused`) — it is
+   * this actor's own out-of-band context for `gateway.ts`'s
+   * `autoPauseOnAbsence`, which is the one caller with presence knowledge
+   * dealer-core deliberately doesn't have (`state.ts`'s module comment). A
+   * genuine client `request_pause` frame never carries one, so
+   * `toWireEvent`'s own default (`"requested"`, `table/events.ts`) is what
+   * every player-initiated pause still gets; only this actor overrides it,
    * the same "override the event after the fact" shape `applyOverrides`
    * already uses for `CorrectionProposed`/`CorrectionApplied`/
    * `ReshuffleCommitmentPublished`'s own seq fields.
+   *
+   * `options.cmdId` (docs/13 §4, ADR-0009), when given, is checked against
+   * `CommandReceipts` *before* dispatch: a `cmdId` already recorded
+   * returns its original `seq` immediately, with no re-validation,
+   * re-application, or new frames — durable across a restart via
+   * `ActorSnapshot.receipts`. Not every caller has one: system-initiated
+   * submits (`gateway.ts`'s `autoPauseOnAbsence`/`autoResumeOnReturn`)
+   * carry no client `cmdId` at all and always dispatch normally.
+   *
+   * `CommandReceipts` is cleared per game, same points `CheckpointHistory`
+   * is (below) — "for the life of the game" (docs/13 §4), matching a
+   * checkpoint's own "complete, self-sufficient state" scope (docs/16
+   * §5.2). One narrow, non-exploitable consequence, flagged rather than
+   * hidden: the check runs *before* dispatch, so if a client reused
+   * `start_deal`'s own `cmdId` for a later game's `start_deal` (never a
+   * legitimate case — a real client mints a fresh `cmdId` per intent, and
+   * "start a new game" is always a new intent), the clear that reuse would
+   * have triggered never runs, and the stale prior-game `seq` keeps being
+   * returned. No double-application results either way — worst case is a
+   * confusing `seq` for a cmdId no well-behaved client would ever resend.
    */
   submit<N extends CommandName>(
     seat: Seat,
     cmd: N,
     params: CommandParamsMap[N],
-    pauseReason?: "seat_absent",
+    options?: { readonly pauseReason?: "seat_absent"; readonly cmdId?: string },
   ): SubmitOutcome {
+    const cmdId = options?.cmdId;
+    if (cmdId !== undefined) {
+      const existingSeq = this.commandReceipts.get(cmdId);
+      if (existingSeq !== undefined) {
+        return { ok: true, seq: existingSeq };
+      }
+    }
+
     const result = this.dispatch(seat, cmd, params);
 
     if (!result.ok) {
@@ -313,9 +381,16 @@ export class TableActor {
     this.gameState = result.state;
     if (result.clearCheckpoints) {
       this.checkpoints.clear();
+      this.commandReceipts.clear();
     }
     if (result.recordCheckpoint) {
       this.checkpoints.record(this.seq, this.gameState);
+    }
+    // After the clear above, not before — so a game-starting command's own
+    // cmdId (start_deal both clears the window and is the first thing
+    // recorded in it) survives into the fresh window it just created.
+    if (cmdId !== undefined) {
+      this.commandReceipts.record(cmdId, this.seq);
     }
 
     for (const viewer of SEAT_ORDER) {
@@ -327,7 +402,7 @@ export class TableActor {
         this.pushFrame(viewer, {
           kind: "event",
           seq: this.seq,
-          ev: this.applyOverrides(wireEvent, result, pauseReason),
+          ev: this.applyOverrides(wireEvent, result, options?.pauseReason),
           view,
         });
       }

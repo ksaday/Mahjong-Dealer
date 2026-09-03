@@ -298,7 +298,7 @@ export class TableGateway {
    */
   private autoPauseOnAbsence(seat: Seat): void {
     const beforeGameId = this.actor.currentGameId;
-    const outcome = this.actor.submit(seat, "request_pause", undefined, "seat_absent");
+    const outcome = this.actor.submit(seat, "request_pause", undefined, { pauseReason: "seat_absent" });
     if (outcome.ok) {
       this.deliverNewFrames();
       this.syncCheckpoint(beforeGameId, outcome.seq);
@@ -438,7 +438,7 @@ export class TableGateway {
     }
 
     const beforeGameId = this.actor.currentGameId;
-    const outcome = this.actor.submit(connection.seat, commandName, parsed.data as never);
+    const outcome = this.actor.submit(connection.seat, commandName, parsed.data as never, { cmdId });
 
     if (!outcome.ok) {
       this.rejectAndRecord(connection, cmdId, outcome.code);

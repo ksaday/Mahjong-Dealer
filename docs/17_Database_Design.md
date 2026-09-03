@@ -4,7 +4,7 @@
 |---|---|
 | **Project** | American Mahjong Dealer |
 | **Document** | 17_Database_Design.md |
-| **Status** | Ratified v0.6 — approved by the project owner, 2026-09-03 |
+| **Status** | Ratified v0.7 — approved by the project owner, 2026-09-03 |
 | **Last Updated** | 2026-09-03 |
 | **Role in SSOT** | Owns the physical schema: tables, columns, constraints, indexes, encryption, and privileges. Does **not** own what data exists or why (`16`), the privacy classification (`14`), or migration operations (`27`). |
 
@@ -220,6 +220,12 @@ games.
 `private_state` is a single encrypted blob (`D-16-03`). Its plaintext never touches the database, so
 even a full dump yields ciphertext.
 
+`receipts` (`D-17-20`) is a plaintext operational projection of the same `cmdId`s durably tracked
+inside `private_state`'s encrypted envelope (`13 §4`, `ADR-0009`) — cmdId only, no `seq`, mirroring
+`public_state`'s own "informational, restore never reads it" role. The restore-critical copy (cmdId
+*and* the `seq` each one produced) lives inside `private_state`; this column exists only for
+`app_readonly`'s operational visibility.
+
 ### 5.8 `correction_checkpoints`
 
 Identical shape, retained for the correction window rather than overwritten.
@@ -269,6 +275,13 @@ Checked at review for every new event type and asserted by `TC-P04`.
 | `applied_at` | timestamptz | |
 
 Idempotency receipts (`13 §4`). Cascade-deleted with the game.
+
+**Superseded, `D-17-20`**: this table has existed since the first migration but is never read or
+written by any code — `16 §3`'s own "Where authority lives" diagram places command receipts in
+memory, durable "via checkpoints" only, with no separate table on its Postgres side at all. The
+mechanism actually built is `checkpoints.receipts` (`§5.7`), matching that diagram. This table is
+left physically in place (dropping it is a more invasive migration than leaving an unused one) but
+should not be treated as live schema.
 
 ### 5.11 `audit_log`
 
@@ -326,7 +339,7 @@ otherwise would.
 | `unique (join_code_hash) where status <> 'closed'` | `tables` | Codes unique among live tables, reusable after |
 | `unique (ticket_hash)` | `connect_tickets` | Single-use tickets |
 | `unique (game_id, seq)` | `game_events` | No duplicate sequence in the log |
-| `primary key (game_id, cmd_id)` | `command_receipts` | Exactly-once command application |
+| `primary key (game_id, cmd_id)` | `command_receipts` | Exactly-once command application — superseded, see `§5.10` |
 | `primary key (account_id, endpoint, key)` | `idempotency_keys` | One cached response per account, per endpoint, per key |
 | Append-only triggers | `game_events`, `audit_log` | Records cannot be rewritten |
 
@@ -422,6 +435,7 @@ The absences are as normative as the tables, and each is enforced by a negative 
 | D-17-17 | `mfa_verified_at` lives on `sessions`, not `accounts` | Step-up verifies *this session*, not the account generally — a new login is a new session and starts unverified again, the same way `revoked_at` doesn't carry across sessions. `D-15-11`, `ADR-0017`. |
 | D-17-18 | `private_state` restore goes through a second DB role (`app_checkpoint_reader`), not a grant widening `app` | `§7.2`'s existing denial on `app` was written before any legitimate consumer of `private_state` existed; crash-recovery restore (`docs/29`) is now that consumer. A second, SELECT-only, single-column, single-table role keeps the original defense-in-depth property literally true (`app`'s own credentials still can't read the column at all) rather than trading it for one fewer connection to manage. |
 | D-17-19 | `correction_checkpoints` durability closes via the same `app_checkpoint_reader` role and `CheckpointWriter` injection point as `checkpoints`, not a second reader role | A new migration (`0007`) widens that role's existing grant to a second table rather than creating another one — the isolation property `D-17-18` protects (`app`'s own credentials still can't read either `private_state` column) is unaffected by one role reading two tables of the same data class instead of one. `docs/29`, `ADR-0016`. |
+| D-17-20 | `command_receipts` (`§5.10`) is superseded by `checkpoints.receipts` (`§5.7`), not built out as a second mechanism | `16 §3`'s own "Where authority lives" diagram places command receipts in memory, durable "via checkpoints" only — no separate table on its Postgres side. `command_receipts` predates that diagram (or was never reconciled with it) and has no code reading or writing it. Left in place rather than dropped — a schema deletion is a more invasive migration than marking a table unused. `13 §4`, `ADR-0009`. |
 
 ---
 
@@ -513,3 +527,4 @@ analysis.
 | 0.4 | 2026-09-03 | Design (architect role), owner-approved | `ADR-0017`: `accounts.totp_secret`/`totp_secret_key_version`/`totp_enrolled_at`/`totp_last_used_step`/`mfa_failed_attempts`/`mfa_locked_until` and `sessions.mfa_verified_at` (`§5.1`, `§5.2`); `D-17-15`–`D-17-17` |
 | 0.5 | 2026-09-03 | Design (architect role), owner-approved | Checkpoint durability (`docs/29`): `app_checkpoint_reader` role (`§7.2`, migration `0006`) as `private_state`'s dedicated decryption path; `D-17-18` |
 | 0.6 | 2026-09-03 | Design (architect role), owner-approved | `correction_checkpoints` durability (`docs/29`, `ADR-0016`): migration `0007` extends `app_checkpoint_reader` to `correction_checkpoints` (`§7.2`); `§5.8` restore note; `D-17-19` |
+| 0.7 | 2026-09-03 | Design (architect role), owner-approved | Durable `cmdId` idempotency (`13 §4`, `ADR-0009`): `checkpoints.receipts` (`§5.7`) is now the real mechanism, no new migration needed; `command_receipts` (`§5.10`) marked superseded, `§6`'s constraint row annotated; `D-17-20` |

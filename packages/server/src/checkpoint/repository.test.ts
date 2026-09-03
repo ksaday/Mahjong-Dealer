@@ -14,6 +14,7 @@ describe("InMemoryCheckpointRepository", () => {
       seq: 3,
       publicState: { lifecycle: "in_play" },
       privateState: Buffer.from("ciphertext"),
+      receipts: [],
       keyVersion: 1,
     });
     const found = await repo.readForRestore("game-1");
@@ -23,16 +24,29 @@ describe("InMemoryCheckpointRepository", () => {
 
   it("overwrites in place — one row per game (docs/17 §5.7)", async () => {
     const repo = new InMemoryCheckpointRepository();
-    await repo.record({ gameId: "game-1", seq: 1, publicState: {}, privateState: Buffer.from("a"), keyVersion: 1 });
-    await repo.record({ gameId: "game-1", seq: 2, publicState: {}, privateState: Buffer.from("b"), keyVersion: 1 });
+    await repo.record({ gameId: "game-1", seq: 1, publicState: {}, privateState: Buffer.from("a"), receipts: [], keyVersion: 1 });
+    await repo.record({ gameId: "game-1", seq: 2, publicState: {}, privateState: Buffer.from("b"), receipts: [], keyVersion: 1 });
     const found = await repo.readForRestore("game-1");
     expect(found?.privateState.toString()).toBe("b");
   });
 
   it("deletes the row for a game", async () => {
     const repo = new InMemoryCheckpointRepository();
-    await repo.record({ gameId: "game-1", seq: 1, publicState: {}, privateState: Buffer.from("a"), keyVersion: 1 });
+    await repo.record({ gameId: "game-1", seq: 1, publicState: {}, privateState: Buffer.from("a"), receipts: [], keyVersion: 1 });
     await repo.deleteForGame("game-1");
     expect(await repo.readForRestore("game-1")).toBeNull();
+  });
+
+  it("round-trips the receipts projection (docs/17 §5.7: 'Applied cmdId values')", async () => {
+    const repo = new InMemoryCheckpointRepository();
+    await repo.record({
+      gameId: "game-1",
+      seq: 1,
+      publicState: {},
+      privateState: Buffer.from("a"),
+      receipts: ["cmd-1", "cmd-2"],
+      keyVersion: 1,
+    });
+    expect(repo.peek("game-1")?.receipts).toEqual(["cmd-1", "cmd-2"]);
   });
 });

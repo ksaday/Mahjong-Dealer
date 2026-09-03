@@ -178,6 +178,41 @@ describe("checkpoint durability through the gateway", () => {
     expect(correctionCheckpoints.peek(gameId)).toHaveLength(0);
   });
 
+  it("a cmdId retried against a restarted gateway returns its original ack, without re-applying (docs/13 §4, ADR-0009)", async () => {
+    const { actor, checkpointWriter, seats } = setUpDealtGame();
+    await flush();
+    const gameId = actor.currentGameId!;
+
+    const retryCmdId = cmdId(9999);
+    seats.east.send({ t: "cmd", cmd: "draw_tile", d: { end: "head" }, cmdId: retryCmdId });
+    await flush();
+    const originalAck = seats.east.socket.framesOfType("ack").at(-1);
+    expect(originalAck).toBeDefined();
+
+    // A fresh actor/gateway pair built purely from the durable checkpoint —
+    // simulates a process restart. Seat occupancy stands in for what a real
+    // restart would source from TableRepository (unchanged here).
+    const restoredGame = await checkpointWriter.readGameState(gameId);
+    if (restoredGame === null) throw new Error("unreachable");
+    const restoredActor = TableActor.fromRestoredParts(
+      { id: "t1", entropy: createDeterministicEntropy(1) },
+      actor.tableSnapshot,
+      restoredGame,
+    );
+    const restoredTickets = new TicketStore();
+    const restoredGateway = new TableGateway({ actor: restoredActor, tickets: restoredTickets, checkpointWriter });
+    const restoredSeat = bindSeat(restoredGateway, restoredTickets, "east");
+    const stateBeforeRetry = restoredActor.gameStateSnapshot;
+
+    // Different params than the original — proving this isn't a lucky re-validation match.
+    restoredSeat.send({ t: "cmd", cmd: "draw_tile", d: { end: "tail" }, cmdId: retryCmdId });
+    await flush();
+
+    const retryAck = restoredSeat.socket.framesOfType("ack").at(-1);
+    expect(retryAck).toEqual(originalAck);
+    expect(restoredActor.gameStateSnapshot).toEqual(stateBeforeRetry); // no second draw happened
+  });
+
   it("never writes a checkpoint when no writer is configured", async () => {
     const actor = new TableActor({ id: "t2", entropy: createDeterministicEntropy(2) });
     const tickets = new TicketStore();

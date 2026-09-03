@@ -11,13 +11,16 @@
 // adds. `public-projection.ts` builds the informational-only `public_state`
 // column separately, from `GameState` directly, and restore never reads it.
 //
-// `checkpoints.receipts` is always written as `'[]'` (its schema default):
-// `TableActor` never tracks accepted `cmdId`s at all (its own header
-// comment: "an idempotency/gateway concern this actor doesn't yet see"),
-// even though docs/13 §4 says `cmdId` retention belongs "in the actor and
-// in the checkpoint." That is a separate, pre-existing gap this session
-// does not close — durable cmdId dedup across a restart still doesn't
-// exist (only the gateway's in-memory ack cache does).
+// `checkpoints.receipts` (docs/17 §5.7: "Applied `cmdId` values |
+// Operational") is a plaintext projection of `TableActor.acceptedCmdIds`,
+// same "public projection alongside the encrypted blob" pattern
+// `public-projection.ts` builds `public_state` with. The restore-critical
+// copy — cmdId *and* the seq each one produced — lives inside the
+// encrypted `private_state` envelope instead (`ActorSnapshot.receipts`),
+// alongside everything else `snapshot()`/`fromRestoredParts` already
+// round-trip; `readGameState` below returns it unchanged, same as `seq`/
+// `gameStateBytes`/`gameId`. docs/17 §5.10's separate `command_receipts`
+// table is superseded by this — see that section's own note, `D-17-20`.
 //
 // Correction-checkpoint durability (docs/17 §5.8, D-17-19) reuses this same
 // class rather than a second injected one, since it shares the encryption
@@ -78,6 +81,7 @@ export class CheckpointWriter {
       seq: actor.gameStateSnapshot.seq,
       publicState,
       privateState,
+      receipts: actor.acceptedCmdIds,
       keyVersion: CURRENT_KEY_VERSION,
     });
     await this.games.recordSeq(gameId, actor.gameStateSnapshot.seq);
@@ -123,7 +127,7 @@ export class CheckpointWriter {
    * with this game-state portion; refusing on failure happens there, not
    * here.
    */
-  async readGameState(gameId: string): Promise<Pick<ActorSnapshot, "seq" | "gameStateBytes" | "gameId"> | null> {
+  async readGameState(gameId: string): Promise<Pick<ActorSnapshot, "seq" | "gameStateBytes" | "gameId" | "receipts"> | null> {
     const row = await this.checkpoints.readForRestore(gameId);
     if (row === null) return null;
     if (row.keyVersion !== CURRENT_KEY_VERSION) {
@@ -131,7 +135,7 @@ export class CheckpointWriter {
     }
     const plaintext = decryptCheckpoint(row.privateState, this.encryptionKey);
     const snapshot = JSON.parse(plaintext.toString("utf8")) as ActorSnapshot;
-    return { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId };
+    return { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId, receipts: snapshot.receipts };
   }
 
   /** Fire-and-forget — off the acknowledgement path (NFR-032, docs/16 §5.3), same as `writeAsync`. `entry` is `TableActor.latestCorrectionCheckpoint` — the caller (`TableGateway.syncCheckpoint`) is responsible for only calling this when that entry is actually new. */

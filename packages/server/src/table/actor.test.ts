@@ -260,6 +260,22 @@ describe("crash / restart (docs/29_Disaster_Recovery.md; DD-29, DD-30)", () => {
     harness.restart();
     expect(harness.currentGameId()).toBe(gameId);
   });
+
+  it("preserves cmdId idempotency across a crash and restart (docs/13 §4, ADR-0009)", () => {
+    const harness = TableHarness.create({ seed: 3 });
+    readyAllAndDeal(harness);
+    const before = harness.actorForTest().submit("east", "draw_tile", { end: "head" }, { cmdId: "cmd-1" });
+    expect(before.ok).toBe(true);
+
+    harness.crash();
+    harness.restart();
+
+    const stateBeforeRetry = harness.state();
+    const retry = harness.actorForTest().submit("east", "draw_tile", { end: "tail" }, { cmdId: "cmd-1" });
+
+    expect(retry).toEqual(before); // the original seq, not re-applied
+    expect(harness.state()).toEqual(stateBeforeRetry); // no second draw happened
+  });
 });
 
 describe("TableActor.fromRestoredParts (docs/29_Disaster_Recovery.md, process-restart recovery)", () => {
@@ -283,7 +299,7 @@ describe("TableActor.fromRestoredParts (docs/29_Disaster_Recovery.md, process-re
     const actor = TableActor.fromRestoredParts(
       { id: "harness-table", entropy: createDeterministicEntropy(5) },
       freshTable,
-      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId },
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId, receipts: snapshot.receipts },
     );
     expect(actor.gameStateSnapshot).toEqual(harness.state());
     expect(actor.seqNumber).toBe(harness.seqNumber());
@@ -305,7 +321,7 @@ describe("TableActor.fromRestoredParts (docs/29_Disaster_Recovery.md, process-re
     const actor = TableActor.fromRestoredParts(
       { id: "harness-table", entropy: createDeterministicEntropy(6) },
       harness.table(),
-      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId },
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId, receipts: snapshot.receipts },
       [
         { actorSeq: dealEntry.seq, gameStateBytes: dealBytes },
         { actorSeq: drawEntry.seq, gameStateBytes: snapshot.gameStateBytes },
@@ -325,11 +341,116 @@ describe("TableActor.fromRestoredParts (docs/29_Disaster_Recovery.md, process-re
     const actor = TableActor.fromRestoredParts(
       { id: "harness-table", entropy: createDeterministicEntropy(7) },
       harness.table(),
-      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId },
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId, receipts: snapshot.receipts },
     );
 
     expect(actor.latestCorrectionCheckpoint).toBeNull();
     const rejected = actor.submit("south", "propose_correction", { rewindTo: snapshot.seq });
     expect(rejected).toEqual({ ok: false, code: "NO_CHECKPOINT" });
+  });
+
+  it("replays game.receipts, so a pre-restart cmdId retry still returns its original seq (docs/13 §4, ADR-0009)", () => {
+    const harness = TableHarness.create({ seed: 8 });
+    readyAllAndDeal(harness);
+    const before = harness.actorForTest().submit("east", "draw_tile", { end: "head" }, { cmdId: "cmd-1" });
+    expect(before.ok).toBe(true);
+    const snapshot = harness.snapshotForTest();
+
+    const actor = TableActor.fromRestoredParts(
+      { id: "harness-table", entropy: createDeterministicEntropy(8) },
+      harness.table(),
+      { seq: snapshot.seq, gameStateBytes: snapshot.gameStateBytes, gameId: snapshot.gameId, receipts: snapshot.receipts },
+    );
+
+    expect(actor.acceptedCmdIds).toEqual(["cmd-1"]);
+    const stateBeforeRetry = actor.gameStateSnapshot;
+    const retry = actor.submit("east", "draw_tile", { end: "tail" }, { cmdId: "cmd-1" });
+    expect(retry).toEqual(before);
+    expect(actor.gameStateSnapshot).toEqual(stateBeforeRetry);
+  });
+});
+
+describe("cmdId idempotency (docs/13 §4, ADR-0009)", () => {
+  it("a duplicate cmdId returns the original seq without re-dispatching or pushing new frames", () => {
+    const harness = TableHarness.create({ seed: 10 });
+    readyAllAndDeal(harness);
+    const actor = harness.actorForTest();
+    const before = actor.gameStateSnapshot;
+    if (before.lifecycle !== "in_play") throw new Error("unreachable");
+    const handBefore = before.locations.hands.east.length;
+
+    const first = actor.submit("east", "draw_tile", { end: "head" }, { cmdId: "cmd-1" });
+    expect(first.ok).toBe(true);
+    const framesBefore = SEAT_ORDER.map((seat) => actor.framesFor(seat).length);
+
+    // Different params on the retry — proves the short-circuit precedes any re-validation entirely.
+    const second = actor.submit("east", "draw_tile", { end: "tail" }, { cmdId: "cmd-1" });
+
+    expect(second).toEqual(first);
+    expect(SEAT_ORDER.map((seat) => actor.framesFor(seat).length)).toEqual(framesBefore);
+    const after = actor.gameStateSnapshot;
+    if (after.lifecycle !== "in_play") throw new Error("unreachable");
+    expect(after.locations.hands.east).toHaveLength(handBefore + 1); // drawn exactly once
+  });
+
+  it("a fresh cmdId is applied normally, distinct from a duplicate of a different one", () => {
+    const harness = TableHarness.create({ seed: 10 });
+    readyAllAndDeal(harness);
+    const actor = harness.actorForTest();
+
+    const first = actor.submit("east", "draw_tile", { end: "head" }, { cmdId: "cmd-1" });
+    const second = actor.submit("south", "draw_tile", { end: "head" }, { cmdId: "cmd-2" });
+
+    expect(second.ok).toBe(true);
+    if (first.ok && second.ok) expect(second.seq).toBe(first.seq + 1);
+  });
+
+  it("a rejected command's cmdId is not remembered — a later retry re-validates rather than replaying the rejection", () => {
+    const harness = TableHarness.create({ seed: 11 });
+    harness.seatAll();
+    const actor = harness.actorForTest();
+
+    const rejected = actor.submit("south", "close_table", undefined, { cmdId: "cmd-y" }); // FORBIDDEN: south isn't host
+    expect(rejected).toEqual({ ok: false, code: "FORBIDDEN" });
+
+    const accepted = actor.submit("east", "close_table", undefined, { cmdId: "cmd-y" }); // same cmdId, the host this time
+    expect(accepted.ok).toBe(true);
+  });
+
+  it("clears on start_deal — pre-deal receipts (e.g. set_ready) don't survive into the game's own window", () => {
+    const harness = TableHarness.create({ seed: 12 });
+    harness.seatAll();
+    const actor = harness.actorForTest();
+    actor.submit("east", "set_ready", undefined, { cmdId: "ready-cmd" });
+    expect(actor.acceptedCmdIds).toContain("ready-cmd");
+    for (const seat of SEAT_ORDER) {
+      if (seat !== "east") actor.submit(seat, "set_ready", undefined);
+    }
+
+    actor.submit("east", "start_deal", undefined);
+
+    expect(actor.acceptedCmdIds).toEqual([]);
+  });
+
+  it("clears on close_table", () => {
+    const harness = TableHarness.create({ seed: 13 });
+    harness.seatAll();
+    const actor = harness.actorForTest();
+    actor.submit("east", "set_ready", undefined, { cmdId: "ready-cmd" });
+    expect(actor.acceptedCmdIds).toContain("ready-cmd");
+
+    actor.submit("east", "close_table", undefined);
+    expect(actor.acceptedCmdIds).toEqual([]);
+  });
+
+  it("clears on forceClose, which bypasses submit()/dispatch() entirely", () => {
+    const harness = TableHarness.create({ seed: 14 });
+    readyAllAndDeal(harness);
+    const actor = harness.actorForTest();
+    actor.submit("east", "draw_tile", { end: "head" }, { cmdId: "draw-cmd" });
+    expect(actor.acceptedCmdIds).toContain("draw-cmd");
+
+    harness.forceClose("administrative action");
+    expect(actor.acceptedCmdIds).toEqual([]);
   });
 });

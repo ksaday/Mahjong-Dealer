@@ -90,6 +90,43 @@ describe("TableManager.restoreLiveTables", () => {
     expect(afterLive!.actor.tableSnapshot.host).toBe("east");
   });
 
+  it("a cmdId retried after a restart returns its original seq without re-applying (docs/13 §4, ADR-0009)", async () => {
+    const tables = new InMemoryTableRepository();
+    const accounts = new InMemoryAccountRepository();
+    const games = new InMemoryGamesRepository();
+    const checkpoints = new InMemoryCheckpointRepository();
+    const correctionCheckpoints = new InMemoryCorrectionCheckpointRepository();
+    const checkpointWriter = new CheckpointWriter(checkpoints, games, randomBytes(32), correctionCheckpoints);
+
+    const accountBySeat = await seedTableAndAccounts(tables, accounts);
+
+    const before = new TableManager(createDeterministicEntropy(1), undefined, checkpointWriter);
+    before.create("t1");
+    readyAllAndDeal(before, accountBySeat);
+    const beforeLive = before.get("t1");
+    if (beforeLive === undefined) throw new Error("unreachable");
+    const gameId = beforeLive.actor.currentGameId;
+    if (gameId === null) throw new Error("unreachable");
+    await checkpointWriter.startGame(gameId, "t1");
+
+    // A command whose ack the client never received before the crash.
+    const original = beforeLive.actor.submit("east", "draw_tile", { end: "head" }, { cmdId: "retry-cmd" });
+    if (!original.ok) throw new Error("unreachable");
+    await checkpointWriter.flushSync(beforeLive.actor);
+
+    const after = new TableManager(createDeterministicEntropy(99), undefined, checkpointWriter);
+    await after.restoreLiveTables({ tables, accounts, games, checkpointWriter });
+    const afterLive = after.get("t1");
+    if (afterLive === undefined) throw new Error("unreachable");
+
+    const stateBeforeRetry = afterLive.actor.gameStateSnapshot;
+    // The client retries with different params — proving this isn't a lucky re-validation match.
+    const retry = afterLive.actor.submit("east", "draw_tile", { end: "tail" }, { cmdId: "retry-cmd" });
+
+    expect(retry).toEqual(original);
+    expect(afterLive.actor.gameStateSnapshot).toEqual(stateBeforeRetry); // no second draw happened
+  });
+
   it("restores the correction window from durable storage, trimmed to the newest 10 entries (docs/17 §5.8, D-17-19)", async () => {
     const tables = new InMemoryTableRepository();
     const accounts = new InMemoryAccountRepository();

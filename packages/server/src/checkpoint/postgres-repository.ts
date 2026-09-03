@@ -23,14 +23,15 @@ export class PostgresCheckpointRepository implements CheckpointRepository {
   async record(row: NewCheckpointRow): Promise<void> {
     await this.writePool.query(
       `INSERT INTO checkpoints (game_id, seq, public_state, private_state, receipts, key_version)
-       VALUES ($1, $2, $3, $4, '[]'::jsonb, $5)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (game_id) DO UPDATE SET
          seq = EXCLUDED.seq,
          public_state = EXCLUDED.public_state,
          private_state = EXCLUDED.private_state,
+         receipts = EXCLUDED.receipts,
          key_version = EXCLUDED.key_version,
          written_at = now()`,
-      [row.gameId, row.seq, JSON.stringify(row.publicState), row.privateState, row.keyVersion],
+      [row.gameId, row.seq, JSON.stringify(row.publicState), row.privateState, JSON.stringify(row.receipts), row.keyVersion],
     );
   }
 
